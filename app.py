@@ -2,7 +2,11 @@ import streamlit as st
 import json
 import os
 import time
+from dotenv import load_dotenv
 from typing import Dict, List
+
+# Load environment variables
+load_dotenv()
 
 # Import from your local modules
 try:
