@@ -50,7 +50,7 @@ def process_pdf_with_mistral(pdf_path):
     
     # API endpoint and headers
     azure_endpoint = os.getenv('AZURE_ENDPOINT')
-    url = azure_endpoint
+    url = azure_endpoint + "/providers/mistral/azure/ocr"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
