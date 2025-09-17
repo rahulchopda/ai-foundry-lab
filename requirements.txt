@@ -1,0 +1,11 @@
+requests
+python-dotenv
+streamlit
+openai
+azure-ai-textanalytics
+pyyaml
+guardrails-ai
+pandas
+PyMuPDF
+azure-identity
+plotly
