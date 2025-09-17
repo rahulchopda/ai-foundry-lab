@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 import fitz
 from azure.identity import DefaultAzureCredential
 from model_orchestrator import ModelOrchestrator
-from pii_analyzer import PIIHandler  # Add this import
+from pii_analyzer import PIIHandler
 
 try:
     from governance_logger import log_interaction, load_logs
@@ -16,7 +16,7 @@ except Exception:
     HAS_GOVERNANCE = False
 
 # Initialize PII Handler
-pii_handler = PIIHandler() 
+pii_handler = PIIHandler()
 
 # --- Load Config ---
 cfg = {}
@@ -48,7 +48,7 @@ def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) ->
     orchestrator = ModelOrchestrator(model_endpoints, api_key)
     handler = orchestrator.get_handler(model_name)
     print(f"Using handler {handler.__class__.__name__} with endpoint {handler.endpoint!r}")
-    
+
     try:
         raw = handler.call(prompt)
         if isinstance(raw, str):
@@ -210,16 +210,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
-GOVERNANCE_METRICS = {
-    "Model Usage": 324,
-    "Team Accesses": 18,
-    "Compliance Checks": "Passed",
-    "Audit Trail": "Enabled",
-    "Data Residency": "US/EU",
-    "Last Model Update": "2025-09-10",
-}
-
 # --- Model selection ---
 st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
 if model_choices:
@@ -256,16 +246,16 @@ elif input_type == "Document Upload":
 if doc_data:
     st.markdown('<div class="ms-section-title">PII Detection</div>', unsafe_allow_html=True)
     run_pii = st.checkbox("Detect and redact sensitive information (PII)")
-    
+
     if run_pii:
         try:
             with st.spinner("Detecting sensitive information..."):
                 pii_result = pii_handler.analyze_text(doc_data)
-                
+
                 if pii_result["success"]:
                     if pii_result["entities"]:
-                        st.markdown('<div class="ms-success">✨ PII Detection Results</div>', unsafe_allow_html=True)
-                        
+                        st.markdown('<div class="ms-success">PII Detection Results</div>', unsafe_allow_html=True)
+
                         # Show detected entities
                         with st.expander("View Detected Sensitive Information"):
                             for entity in pii_result["entities"]:
@@ -274,7 +264,7 @@ if doc_data:
                                     - Text: `{entity.text}`
                                     - Confidence: {entity.confidence_score:.2f}
                                 """)
-                        
+
                         # Update doc_data with redacted text
                         doc_data = pii_result["redacted_text"]
                         st.info("Input text has been redacted for sensitive information")
@@ -282,10 +272,9 @@ if doc_data:
                         st.success("No sensitive information (PII) detected in the text")
                 else:
                     st.error(f"PII detection failed: {pii_result.get('error', 'Unknown error')}")
-                    
+
         except Exception as e:
             st.error(f"Error during PII detection: {str(e)}")
-
 
 # Prompt
 st.markdown('<div class="ms-section-title">Prompt</div>', unsafe_allow_html=True)
@@ -295,45 +284,45 @@ if st.button("Run Model with Guardrails", type="primary", use_container_width=Tr
     if not doc_data:
         st.error("Please provide input text or upload a document first.")
         st.stop()
-        
+
     if not selected_model:
         st.error("Please select a model first.")
         st.stop()
 
-    st.markdown('<div class="ms-section-title">⚙️ Processing</div>', unsafe_allow_html=True)
+    st.markdown('<div class="ms-section-title">Processing</div>', unsafe_allow_html=True)
     progress_bar = st.progress(0)
     status_text = st.empty()
 
     try:
         # Prepare prompt
-        status_text.text("🔄 Preparing prompt...")
+        status_text.text("Preparing prompt...")
         progress_bar.progress(20)
-        
-        final_prompt = prompt +" "+doc_data
+
+        final_prompt = prompt + " " + doc_data
 
         # Display the final prompt
-        st.markdown('<div class="ms-section-title">📝 Final Prompt</div>', unsafe_allow_html=True)
+        st.markdown('<div class="ms-section-title">Final Prompt</div>', unsafe_allow_html=True)
         st.code(final_prompt, language="text")
-        
+
         # Call model
-        status_text.text("🤖 Calling AI model...")
+        status_text.text("Calling AI model...")
         progress_bar.progress(50)
-        
+
         azure_endpoint = model_endpoints.get(selected_model, "").strip()
         response = call_foundry_with_guardrails(azure_endpoint, final_prompt, selected_model)
-        
+
         progress_bar.progress(100)
-        status_text.text("✅ Processing complete!")
+        status_text.text("Processing complete!")
 
         # Display results
-        st.markdown('<div class="ms-section-title">🎯 Results</div>', unsafe_allow_html=True)
-        
+        st.markdown('<div class="ms-section-title">Results</div>', unsafe_allow_html=True)
+
         # Model response
-        st.markdown("### 🤖 Model Response")
+        st.markdown("### Model Response")
         st.write(response.get("content", "No response content."))
 
         # Metrics and governance
-        st.markdown("### 📊 Processing Metrics")
+        st.markdown("### Processing Metrics")
         metrics_cols = st.columns(4)
         with metrics_cols[0]:
             st.metric("Model", selected_model)
@@ -342,27 +331,36 @@ if st.button("Run Model with Guardrails", type="primary", use_container_width=Tr
         with metrics_cols[3]:
             st.metric("Safety Flags", len(response.get("guardrails", {})))
 
-     
-
     except Exception as e:
-        st.error(f"❌ An error occurred: {str(e)}")
+        st.error(f"An error occurred: {str(e)}")
         st.exception(e)
         if HAS_GOVERNANCE:
             log_interaction({
                 "model": selected_model,
                 "status": "error",
                 "error": str(e)
-            })   
-    
-    
+            })
 
-    
+# Monitoring Section with HTML Files
+st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)
+monitoring_cols = st.columns(3)
 
-    # Process button
-    
+with monitoring_cols[0]:
+    st.markdown('<div class="ms-section-title">Model Performance Metrics</div>', unsafe_allow_html=True)
+    with open(os.path.join(os.path.dirname(__file__), "io_metrics.html"), "r", encoding="utf-8") as f:
+        st.components.v1.html(f.read(), height=400, scrolling=True)
 
+with monitoring_cols[1]:
+    st.markdown('<div class="ms-section-title">Request Count Over Time</div>', unsafe_allow_html=True)
+    with open(os.path.join(os.path.dirname(__file__), "request_count.html"), "r", encoding="utf-8") as f:
+        st.components.v1.html(f.read(), height=400, scrolling=True)
 
-st.markdown('<div class="ms-section-title">Governance Summary Metrics</div>', unsafe_allow_html=True)    
+with monitoring_cols[2]:
+    st.markdown('<div class="ms-section-title">Model Latency (ms)</div>', unsafe_allow_html=True)
+    with open(os.path.join(os.path.dirname(__file__), "latency.html"), "r", encoding="utf-8") as f:
+        st.components.v1.html(f.read(), height=400, scrolling=True)
+
+st.markdown('<div class="ms-section-title">Governance Summary Metrics</div>', unsafe_allow_html=True)
 if HAS_GOVERNANCE:
     logs = load_logs()
     if logs is not None and not logs.empty:

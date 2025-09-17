@@ -2,10 +2,14 @@ requests
 python-dotenv
 streamlit
 openai
-azure-ai-textanalytics
-pyyaml
+pip
 guardrails-ai
 pandas
 PyMuPDF
-azure-identity
 plotly
+fitz
+azure-identity
+azure-ai-textanalytics
+azure-monitor-query
+azure-mgmt-costmanagement
+azure-ai-evaluation

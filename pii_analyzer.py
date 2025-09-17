@@ -19,6 +19,9 @@ class PIIHandler:
         Initialize TextAnalytics with API key and endpoint.
         If not provided, will attempt to load from environment variables.
         """
+        import os
+        from dotenv import load_dotenv
+
         # Load environment variables from .env file if present
         load_dotenv()
         
