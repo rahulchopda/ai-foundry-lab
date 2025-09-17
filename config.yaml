@@ -1,0 +1,21 @@
+MODEL_ENDPOINTS:
+  gpt-4o: "https://tip-2025-poc-resource.cognitiveservices.azure.com/"
+  gpt-4.1: "https://tip-2025-poc-resource.cognitiveservices.azure.com/openai/v1/"
+  Phi-4: "https://tip-2025-poc-resource.services.ai.azure.com/openai/v1/"
+
+MODEL_API_VERSION:
+  gpt-4o: "2024-12-01-preview"
+  gpt-4.1: "2024-12-01-preview"
+  Phi-4: "2024-12-01-preview"
+
+
+MODEL_DEPLOYMENTS:
+  - gpt-4o
+  - Phi-4
+  - gpt-4.1
+
+PROMPT_TEMPLATES:
+  Summarization: "Summarize the following content\n{input}\nContext {context}"
+  Q&A: "Answer the following question based on the context.\nQuestion {input}\nContext {context}"
+  Extraction: "Extract key entities from this text:\n{input}\nContext {context}"
+  Translation: "Translate the following text into English:\n{input}\nContext {context}"
