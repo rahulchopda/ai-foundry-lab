@@ -2,420 +2,388 @@ import streamlit as st
 import json
 import os
 import time
-from dotenv import load_dotenv
-from typing import Dict, List
+import yaml
+from typing import Dict, List, Optional
+import fitz
+from azure.identity import DefaultAzureCredential
+from model_orchestrator import ModelOrchestrator
+from pii_analyzer import PIIHandler  # Add this import
 
-# Load environment variables
-load_dotenv()
-
-# Import from your local modules
 try:
-    import importlib.util
+    from governance_logger import log_interaction, load_logs
+    HAS_GOVERNANCE = True
+except Exception:
+    HAS_GOVERNANCE = False
 
-    # Import docAI-pdf.py
-    spec1 = importlib.util.spec_from_file_location("pdfDocumentAi", "mistral-document-ai-pdf.py")
-    pdfDocumentAi = importlib.util.module_from_spec(spec1)
-    spec1.loader.exec_module(pdfDocumentAi)
-    process_pdf_with_mistral = pdfDocumentAi.process_pdf_with_mistral
+# Initialize PII Handler
+pii_handler = PIIHandler() 
 
-    # Import parse-content-pdf.py
-    spec2 = importlib.util.spec_from_file_location("parse_content_pdf", "parse-content-pdf.py")
-    parse_content_pdf = importlib.util.module_from_spec(spec2)
-    spec2.loader.exec_module(parse_content_pdf)
-    extract_recipe_components = parse_content_pdf.extract_recipe_components
-    create_shopping_list = parse_content_pdf.create_shopping_list
-    extract_cooking_temps_and_times = parse_content_pdf.extract_cooking_temps_and_times
-    generate_summary = parse_content_pdf.generate_summary
+# --- Load Config ---
+cfg = {}
+config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+if os.path.exists(config_path):
+    try:
+        with open(config_path, "r") as f:
+            cfg = yaml.safe_load(f) or {}
+    except Exception as e:
+        st.warning(f"Could not load config.yaml: {e}")
 
-except ImportError as e:
-    st.error(f"❌ Error importing modules: {e}")
-    st.stop()
-except Exception as e:
-    st.error(f"❌ Error loading modules: {e}")
-    st.stop()
+model_endpoints = cfg.get("MODEL_ENDPOINTS", {})
+api_key = cfg.get("API_KEY")
+model_choices = cfg.get("MODEL_DEPLOYMENTS", [])
+prompt_templates = cfg.get("PROMPT_TEMPLATES", {})
 
-# Morgan Stanley theme CSS
+# Document processing functions
+def extract_pdf_text(file_content) -> str:
+    """Process uploaded PDF and return text content"""
+    text = ""
+    doc = fitz.open(stream=file_content, filetype="pdf")
+    for page in doc:
+        text += page.get_text()
+    return text
+
+# Model handler wrapper
+def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) -> Dict:
+    """Use ModelOrchestrator handler when available"""
+    orchestrator = ModelOrchestrator(model_endpoints, api_key)
+    handler = orchestrator.get_handler(model_name)
+    print(f"Using handler {handler.__class__.__name__} with endpoint {handler.endpoint!r}")
+    
+    try:
+        raw = handler.call(prompt)
+        if isinstance(raw, str):
+            return {
+                "content": raw,
+                "metrics": {},
+                "guardrails": {},
+                "monitoring": {}
+            }
+        return raw
+    except Exception as e:
+        return {
+            "content": None,
+            "error": str(e),
+            "metrics": {},
+            "guardrails": {},
+            "monitoring": {}
+        }
+
+GOVERNANCE_METRICS = {
+    "Model Usage": 324,
+    "Team Accesses": 18,
+    "Compliance Checks": "Passed",
+    "Audit Trail": "Enabled",
+    "Data Residency": "US/EU",
+    "Last Model Update": "2025-09-10",
+}
+
+# Set wide layout, remove sidebar
+st.set_page_config(page_title="Azure AI Foundry Playground", layout="wide", initial_sidebar_state="collapsed")
+
+# Inject Bootstrap CSS for professional widgets/icons and custom style for wide layout
 st.markdown("""
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 <style>
-    body, .main, .block-container {
-        font-family: 'MS Helvetica', 'Segoe UI', 'Arial', sans-serif !important;
-        background-color: #f7f8fa !important;
-        color: #1a1a1a !important;
+body, .main, .block-container {
+    font-family: 'Helvetica Neue', 'Segoe UI', 'Arial', sans-serif !important;
+    background-color: #ffffff !important;
+    color: #1a1a1a !important;
+}
+.block-container {
+    max-width: 90vw !important;
+    width: 90vw !important;
+    min-width: 90vw !important;
+    margin-left: 5vw !important;
+}
+header[data-testid="stHeader"] {
+    background: none;
+}
+.ms-header {
+    background: linear-gradient(90deg, #002855 70%, #0051a8 100%);
+    color: #fff;
+    padding: 2.5rem 0 1rem 0;
+    border-radius: 0 0 16px 16px;
+    text-align: center;
+    margin-bottom: 2rem;
+    box-shadow: 0 8px 32px rgba(0,40,85,0.08);
+}
+.ms-logo {
+    height: 40px;
+    margin-bottom: 1rem;
+    filter: drop-shadow(0 2px 6px #00285530);
+}
+.ms-card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 16px rgba(0,40,85,0.10);
+    padding: 2rem 2rem 1.5rem 2rem;
+    margin-bottom: 2rem;
+    border: 1.5px solid #eaecef;
+}
+.ms-section-title {
+    font-size: 1.45rem;
+    color: #0051a8;
+    font-weight: 600;
+    margin-bottom: 1rem;
+    letter-spacing: 1.5px;
+    font-family: 'Helvetica Neue', 'Segoe UI', 'Arial', sans-serif !important;
+}
+.ms-success {
+    background: #e0f0ff;
+    border-left: 6px solid #0051a8;
+    padding: 1.2rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    color: #002855;
+    font-weight: 500;
+}
+.ms-footer {
+    text-align: center;
+    color: #002855;
+    padding: 2.5rem 0 1.5rem 0;
+    font-size: 1.1rem;
+    letter-spacing: 1px;
+    background: #f7f8fa;
+    border-top: 2px solid #eaecef;
+    margin-top: 2rem;
+}
+.ms-divider {
+    border: none;
+    border-top: 1px solid #eaecef;
+    margin: 1rem 0;
+}
+.stButton>button {
+    background: linear-gradient(90deg, #002855 70%, #0051a8 100%) !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    border: none !important;
+    border-radius: 8px !important;
+    padding: 0.6rem 1.3rem !important;
+    font-size: 1.1rem !important;
+    box-shadow: 0 2px 8px rgba(0,40,85,0.12) !important;
+    transition: background 0.2s;
+}
+.stButton>button:hover {
+    background: #0051a8 !important;
+    color: #fff !important;
+}
+.stExpander {
+    border: 1px solid #eaecef !important;
+    background: #f7f8fa !important;
+    border-radius: 8px !important;
+}
+.badge-foundry {
+    background: #0051a8;
+    color: #fff;
+    font-size: 1rem;
+    padding: 0.3em 0.7em;
+    border-radius: 0.6em;
+    margin-left: 0.5em;
+}
+.bootstrap-icon {
+    font-size: 1.15em;
+    vertical-align: middle;
+    color: #0051a8;
+    margin-right: 0.25em;
+}
+@media (max-width: 1200px) {
+    .block-container {
+        max-width: 98vw !important;
+        width: 98vw !important;
+        min-width: 98vw !important;
+        margin-left: 1vw !important;
     }
-    .ms-header {
-        background: linear-gradient(90deg, #002855 70%, #0051a8 100%);
-        color: #fff;
-        padding: 2.5rem 0 1rem 0;
-        border-radius: 0 0 16px 16px;
-        text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 8px 32px rgba(0,40,85,0.08);
-    }
-    .ms-logo {
-        height: 40px;
-        margin-bottom: 1rem;
-        filter: drop-shadow(0 2px 6px #00285530);
-    }
-    .ms-card {
-        background: #fff;
-        border-radius: 12px;
-        box-shadow: 0 2px 16px rgba(0,40,85,0.10);
-        padding: 2rem 2rem 1.5rem 2rem;
-        margin-bottom: 2rem;
-        border: 1.5px solid #eaecef;
-    }
-    .ms-section-title {
-        font-size: 1.7rem;
-        color: #0051a8;
-        font-weight: 600;
-        margin-bottom: 1rem;
-        letter-spacing: 1.5px;
-        font-family: 'MS Helvetica', 'Segoe UI', 'Arial', sans-serif !important;
-    }
-    .ms-success {
-        background: #e0f0ff;
-        border-left: 6px solid #0051a8;
-        padding: 1.2rem 1rem;
-        border-radius: 8px;
-        margin-bottom: 1rem;
-        color: #002855;
-        font-weight: 500;
-    }
-    .ms-shopping-item {
-        font-size: 1.05rem;
-        margin: 0.5rem 0;
-        padding: 0.5rem 1rem;
-        background: #f7f8fa;
-        border-left: 4px solid #00b294;
-        border-radius: 5px;
-    }
-    .ms-footer {
-        text-align: center;
-        color: #002855;
-        padding: 2.5rem 0 1.5rem 0;
-        font-size: 1.1rem;
-        letter-spacing: 1px;
-        background: #f7f8fa;
-        border-top: 2px solid #eaecef;
-        margin-top: 2rem;
-    }
-    .ms-sidebar-header {
-        font-size: 1.5rem;
-        color: #0051a8;
-        font-weight: bold;
-        margin-bottom: 1rem;
-        letter-spacing: 1px;
-    }
-    .ms-resource-link {
-        color: #0051a8 !important;
-        font-weight: 500;
-        text-decoration: none !important;
-        margin-left: 8px;
-    }
-    .ms-divider {
-        border: none;
-        border-top: 1px solid #eaecef;
-        margin: 1rem 0;
-    }
-    /* Buttons */
-    .stButton>button {
-        background: linear-gradient(90deg, #002855 70%, #0051a8 100%) !important;
-        color: #fff !important;
-        font-weight: 600 !important;
-        border: none !important;
-        border-radius: 8px !important;
-        padding: 0.6rem 1.3rem !important;
-        font-size: 1.1rem !important;
-        box-shadow: 0 2px 8px rgba(0,40,85,0.12) !important;
-        transition: background 0.2s;
-    }
-    .stButton>button:hover {
-        background: #0051a8 !important;
-        color: #fff !important;
-    }
-    /* Expander */
-    .stExpander {
-        border: 1px solid #eaecef !important;
-        background: #f7f8fa !important;
-        border-radius: 8px !important;
-    }
+}
 </style>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 """, unsafe_allow_html=True)
 
 # Morgan Stanley-style header
 st.markdown("""
 <div class="ms-header">
     <img src="https://www.morganstanley.com/etc/designs/mscorporate/clientlibs/mscorporate/resources/images/ms-logo.svg" class="ms-logo" alt="Morgan Stanley Logo" />
-    <h1 style="margin-bottom:8px;font-family: 'MS Helvetica', 'Segoe UI', 'Arial', sans-serif !important;">Recipe PDF to Shopping List Demo</h1>
-    <span style="font-size:1.2rem;font-weight:400;">Powered by Mistral Document AI & Morgan Stanley AI Foundry</span>
+    <h1 style="margin-bottom:8px;font-family: 'Helvetica Neue', 'Segoe UI', 'Arial', sans-serif !important;">Gen AI Playground</h1>
+    <span style="font-size:1.2rem;font-weight:400;">
+        Experiment, Evaluate, Govern, and Monitor AI Models
+        <span class="badge-foundry">Powered by Azure AI Foundry</span>
+    </span>
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar for MS-style info
-with st.sidebar:
-    st.markdown('<div class="ms-sidebar-header">🧭 Demo Guide</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div style="font-size:1.05rem;">
-    <b>This demo showcases:</b>
-    <ul style="margin-top:0.5rem;">
-        <li>📄 <b>PDF Document AI</b> — Extract text from recipe PDFs using Mistral Document AI</li>
-        <li>🧠 <b>Smart Parsing</b> — Parse ingredients, steps, and cooking parameters</li>
-        <li>🛒 <b>Shopping List Generation</b> — Clean, actionable lists for your groceries</li>
-        <li>📊 <b>Recipe Analysis</b> — Cooking temps, times, and step breakdowns</li>
-    </ul>
-    <b>Demo Flow:</b>
-    <ol>
-        <li>Upload a recipe PDF</li>
-        <li>AI extracts and structures the content</li>
-        <li>Get a shopping list & cooking info instantly</li>
-    </ol>
-    </div>
-    """, unsafe_allow_html=True)
-    st.markdown('<hr class="ms-divider"/>', unsafe_allow_html=True)
-    st.markdown("""
-    <b>Resources:</b>
-    <ul>
-        <li><a href="https://aka.ms/insideAIF" class="ms-resource-link">Watch Demo</a></li>
-        <li><a href="https://aka.ms/insideAIF" class="ms-resource-link">View Code</a></li>
-        <li><a href="https://aka.ms/insideAIF" class="ms-resource-link">Join Discord</a></li>
-    </ul>
-    """, unsafe_allow_html=True)
 
-# Main MS-style card
-st.markdown("""
-<div class="ms-card">
-    <div class="ms-section-title">🚀 AI-Powered Recipe Intelligence</div>
-    <div style="font-size:1.15rem;color:#002855;">
-        Upload a recipe PDF and let AI deliver a structured shopping list & cooking guide—styled in the spirit of Morgan Stanley digital products.
-    </div>
-</div>
-""", unsafe_allow_html=True)
+GOVERNANCE_METRICS = {
+    "Model Usage": 324,
+    "Team Accesses": 18,
+    "Compliance Checks": "Passed",
+    "Audit Trail": "Enabled",
+    "Data Residency": "US/EU",
+    "Last Model Update": "2025-09-10",
+}
 
-# File upload section
-st.markdown('<div class="ms-section-title">📤 Step 1: Upload Your Recipe PDF</div>', unsafe_allow_html=True)
-uploaded_file = st.file_uploader(
-    "Choose a PDF file containing a recipe",
-    type="pdf",
-    help="Upload any recipe PDF—cookbooks, blogs, recipe cards"
-)
-
-if uploaded_file is not None:
-    file_size = len(uploaded_file.getvalue()) / 1024  # KB
-    st.markdown(
-        f'<div class="ms-success">✅ File uploaded: <b>{uploaded_file.name}</b> ({file_size:.1f} KB)</div>',
-        unsafe_allow_html=True
-    )
-
-    # Save uploaded file
-    temp_file_path = "temp_recipe.pdf"
-    with open(temp_file_path, "wb") as f:
-        f.write(uploaded_file.getbuffer())
-
-    # Process button, MS style
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        process_button = st.button("Process Recipe with AI", type="primary", use_container_width=True)
-
-    if process_button:
-        st.markdown('<div class="ms-section-title">⚙️ Step 2: AI Processing</div>', unsafe_allow_html=True)
-
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        try:
-            status_text.text("🔄 Step 1/3: Sending PDF to Mistral Document AI...")
-            progress_bar.progress(10)
-
-            import io
-            import contextlib
-
-            f = io.StringIO()
-            with contextlib.redirect_stdout(f):
-                result = process_pdf_with_mistral(temp_file_path)
-
-            if result is None:
-                st.error("❌ Failed to process PDF. Please check your API key and try again.")
-                st.stop()
-
-            progress_bar.progress(40)
-            status_text.text("✅ Document AI processing complete!")
-
-            status_text.text("🔄 Step 2/3: Extracting recipe components...")
-            progress_bar.progress(60)
-
-            full_content = ""
-            for page in result['pages']:
-                full_content += page['markdown'] + "\n\n"
-
-            f2 = io.StringIO()
-            with contextlib.redirect_stdout(f2):
-                recipe = extract_recipe_components(full_content)
-                shopping_list = create_shopping_list(recipe)
-                temps_times = extract_cooking_temps_and_times(full_content)
-
-            progress_bar.progress(80)
-
-            status_text.text("🔄 Step 3/3: Generating summary and results...")
-            summary = generate_summary(recipe, temps_times)
-
-            progress_bar.progress(100)
-            status_text.text("🎉 Processing complete!")
-
-            time.sleep(1)
-            progress_bar.empty()
-            status_text.empty()
-
-            # Results section: Morgan Stanley Card
-            st.markdown('<hr class="ms-divider"/>', unsafe_allow_html=True)
-            st.markdown('<div class="ms-section-title">📊 Step 3: Results</div>', unsafe_allow_html=True)
-
-            # Summary card
-            st.markdown(f"""
-            <div class="ms-success">
-                <h4 style="margin-bottom:0.5rem;">🍽️ Recipe Summary: <span style="color:#0051a8;">{recipe['title']}</span></h4>
-                <ul style="list-style:none;padding-left:0;margin-top:0.2rem;">
-                    <li><b>{recipe['ingredient_count']}</b> ingredients needed</li>
-                    <li><b>{recipe['step_count']}</b> cooking steps</li>
-                    <li><b>Cooking temperatures:</b> {', '.join(temps_times['temperatures']) if temps_times['temperatures'] else 'None detected'}</li>
-                    <li><b>Estimated times:</b> {', '.join(temps_times['cooking_times']) if temps_times['cooking_times'] else 'None detected'}</li>
-                </ul>
-            </div>
-            """, unsafe_allow_html=True)
-
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                st.markdown('<div class="ms-section-title" style="font-size:1.2rem;">🛒 Shopping List</div>', unsafe_allow_html=True)
-                st.markdown('<span style="color:#002855;">Clean, actionable shopping list:</span>', unsafe_allow_html=True)
-
-                if shopping_list:
-                    for i, item in enumerate(shopping_list, 1):
-                        st.markdown(f"""
-                        <div class="ms-shopping-item">
-                            <b>{i}.</b> {item}
-                        </div>
-                        """, unsafe_allow_html=True)
-                    shopping_list_text = "\n".join([f"{i}. {item}" for i, item in enumerate(shopping_list, 1)])
-                    st.download_button(
-                        label="📥 Download Shopping List",
-                        data=shopping_list_text,
-                        file_name=f"shopping_list_{recipe['title'].replace(' ', '_')}.txt",
-                        mime="text/plain"
-                    )
-                else:
-                    st.warning("No shopping list items extracted")
-
-            with col2:
-                st.markdown('<div class="ms-section-title" style="font-size:1.2rem;">🌡️ Cooking Parameters</div>', unsafe_allow_html=True)
-
-                if temps_times['temperatures']:
-                    st.markdown("**🌡️ Temperatures:**")
-                    for temp in temps_times['temperatures']:
-                        st.write(f"• {temp}")
-                else:
-                    st.write("• No temperatures detected")
-
-                if temps_times['cooking_times']:
-                    st.markdown("**⏰ Cooking Times:**")
-                    for cooking_time in temps_times['cooking_times']:
-                        st.write(f"• {cooking_time}")
-                else:
-                    st.write("• No cooking times detected")
-
-                st.markdown("**📊 Processing Stats:**")
-                st.write(f"• Pages processed: {result['usage_info']['pages_processed']}")
-                st.write(f"• Document size: {result['usage_info']['doc_size_bytes']:,} bytes")
-
-            # Detailed ingredients and instructions
-            with st.expander("📖 Detailed Ingredients & Instructions", expanded=False):
-                col_ing, col_inst = st.columns([1, 1])
-                with col_ing:
-                    st.markdown('<div class="ms-section-title" style="font-size:1.1rem;">🥗 Ingredients</div>', unsafe_allow_html=True)
-                    for ingredient in recipe['ingredients']:
-                        st.write(f"• {ingredient}")
-                with col_inst:
-                    st.markdown('<div class="ms-section-title" style="font-size:1.1rem;">👨‍🍳 Cooking Steps</div>', unsafe_allow_html=True)
-                    for i, step in enumerate(recipe['instructions'], 1):
-                        clean_step = step.replace('\n', ' ').strip()
-                        st.write(f"{i}. {clean_step}")
-
-            # Raw extracted content
-            with st.expander("📄 Raw Extracted Content", expanded=False):
-                st.markdown('<span style="color:#0051a8;">This is the raw markdown extracted by Document AI:</span>', unsafe_allow_html=True)
-                st.code(full_content, language="markdown")
-
-            output_data = {
-                "recipe": recipe,
-                "cooking_info": temps_times,
-                "shopping_list": shopping_list,
-                "original_pages": len(result['pages']),
-                "document_size": result['usage_info']['doc_size_bytes']
-            }
-
-            st.download_button(
-                label="💾 Download Structured Recipe Data (JSON)",
-                data=json.dumps(output_data, indent=2, ensure_ascii=False),
-                file_name=f"recipe_data_{recipe['title'].replace(' ', '_')}.json",
-                mime="application/json"
-            )
-
-        except Exception as e:
-            st.error(f"❌ An error occurred during processing: {str(e)}")
-            st.exception(e)
-
-        finally:
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-
+# --- Model selection ---
+st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
+if model_choices:
+    selected_model = st.selectbox("Choose model:", model_choices)
 else:
-    st.info("👆 Please upload a PDF file to begin the demo")
+    st.warning("No models configured. Please check config.yaml")
+    selected_model = None
 
-    st.markdown('<hr class="ms-divider"/>', unsafe_allow_html=True)
-    st.markdown('<div class="ms-section-title">🎯 How It Works</div>', unsafe_allow_html=True)
+# --- Input Text/Document ---
+st.markdown('<div class="ms-section-title">Input Data</div>', unsafe_allow_html=True)
+input_type = st.radio("Select input type", ["Text", "Document Upload"], horizontal=True)
 
-    col1, col2, col3 = st.columns(3)
+if input_type == "Text":
+    input_text = st.text_area("Enter your input text here", height=180)
+    doc_data = input_text
+    doc_name = "Text Entered"
+elif input_type == "Document Upload":
+    uploaded_file = st.file_uploader("Upload a document (PDF)", type=["pdf"])
+    doc_data = None
+    doc_name = None
+    if uploaded_file is not None:
+        doc_name = uploaded_file.name
+        file_size = len(uploaded_file.getvalue()) / 1024  # KB
+        st.markdown(
+            f'<div class="ms-success">File uploaded: <b>{doc_name}</b> ({file_size:.1f} KB)</div>',
+            unsafe_allow_html=True
+        )
+        if uploaded_file:
+            doc_data = extract_pdf_text(uploaded_file.getvalue())
+        else:
+            doc_data = ""
 
-    with col1:
-        st.markdown("""
-        <div class="ms-card" style="padding:1rem 1rem 0.5rem 1rem;">
-        <b>📄 Step 1: Upload</b>
-        <ul>
-            <li>Cookbook pages</li>
-            <li>Recipe cards</li>
-            <li>Blog screenshots</li>
-            <li>Handwritten recipes</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
-    with col2:
-        st.markdown("""
-        <div class="ms-card" style="padding:1rem 1rem 0.5rem 1rem;">
-        <b>🧠 Step 2: AI Processing</b>
-        <ul>
-            <li>Mistral Document AI extracts text</li>
-            <li>Preserves formatting</li>
-            <li>Handles complex layouts</li>
-            <li>Recognizes structure</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
-    with col3:
-        st.markdown("""
-        <div class="ms-card" style="padding:1rem 1rem 0.5rem 1rem;">
-        <b>🛒 Step 3: Smart Output</b>
-        <ul>
-            <li>Clean shopping list</li>
-            <li>Cooking parameters</li>
-            <li>Step-by-step instructions</li>
-            <li>Downloadable formats</li>
-        </ul>
-        </div>
-        """, unsafe_allow_html=True)
+# Add PII Detection option after input
+if doc_data:
+    st.markdown('<div class="ms-section-title">PII Detection</div>', unsafe_allow_html=True)
+    run_pii = st.checkbox("Detect and redact sensitive information (PII)")
+    
+    if run_pii:
+        try:
+            with st.spinner("Detecting sensitive information..."):
+                pii_result = pii_handler.analyze_text(doc_data)
+                
+                if pii_result["success"]:
+                    if pii_result["entities"]:
+                        st.markdown('<div class="ms-success">✨ PII Detection Results</div>', unsafe_allow_html=True)
+                        
+                        # Show detected entities
+                        with st.expander("View Detected Sensitive Information"):
+                            for entity in pii_result["entities"]:
+                                st.markdown(f"""
+                                    **{entity.category}** found:
+                                    - Text: `{entity.text}`
+                                    - Confidence: {entity.confidence_score:.2f}
+                                """)
+                        
+                        # Update doc_data with redacted text
+                        doc_data = pii_result["redacted_text"]
+                        st.info("Input text has been redacted for sensitive information")
+                    else:
+                        st.success("No sensitive information (PII) detected in the text")
+                else:
+                    st.error(f"PII detection failed: {pii_result.get('error', 'Unknown error')}")
+                    
+        except Exception as e:
+            st.error(f"Error during PII detection: {str(e)}")
 
-# Morgan Stanley-style footer
+
+# Prompt
+st.markdown('<div class="ms-section-title">Prompt</div>', unsafe_allow_html=True)
+prompt = st.text_area("Enter your prompt here", height=180)
+
+if st.button("Run Model with Guardrails", type="primary", use_container_width=True):
+    if not doc_data:
+        st.error("Please provide input text or upload a document first.")
+        st.stop()
+        
+    if not selected_model:
+        st.error("Please select a model first.")
+        st.stop()
+
+    st.markdown('<div class="ms-section-title">⚙️ Processing</div>', unsafe_allow_html=True)
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    try:
+        # Prepare prompt
+        status_text.text("🔄 Preparing prompt...")
+        progress_bar.progress(20)
+        
+        final_prompt = prompt +" "+doc_data
+
+        # Display the final prompt
+        st.markdown('<div class="ms-section-title">📝 Final Prompt</div>', unsafe_allow_html=True)
+        st.code(final_prompt, language="text")
+        
+        # Call model
+        status_text.text("🤖 Calling AI model...")
+        progress_bar.progress(50)
+        
+        azure_endpoint = model_endpoints.get(selected_model, "").strip()
+        response = call_foundry_with_guardrails(azure_endpoint, final_prompt, selected_model)
+        
+        progress_bar.progress(100)
+        status_text.text("✅ Processing complete!")
+
+        # Display results
+        st.markdown('<div class="ms-section-title">🎯 Results</div>', unsafe_allow_html=True)
+        
+        # Model response
+        st.markdown("### 🤖 Model Response")
+        st.write(response.get("content", "No response content."))
+
+        # Metrics and governance
+        st.markdown("### 📊 Processing Metrics")
+        metrics_cols = st.columns(4)
+        with metrics_cols[0]:
+            st.metric("Model", selected_model)
+        with metrics_cols[1]:
+            st.metric("Tokens Used", response.get("metrics", {}).get("token_usage", "N/A"))
+        with metrics_cols[3]:
+            st.metric("Safety Flags", len(response.get("guardrails", {})))
+
+     
+
+    except Exception as e:
+        st.error(f"❌ An error occurred: {str(e)}")
+        st.exception(e)
+        if HAS_GOVERNANCE:
+            log_interaction({
+                "model": selected_model,
+                "status": "error",
+                "error": str(e)
+            })   
+    
+    
+
+    
+
+    # Process button
+    
+
+
+st.markdown('<div class="ms-section-title">Governance Summary Metrics</div>', unsafe_allow_html=True)    
+if HAS_GOVERNANCE:
+    logs = load_logs()
+    if logs is not None and not logs.empty:
+        st.dataframe(logs)
+        metric_cols = st.columns(3)
+        with metric_cols[0]:
+            st.metric("Total Interactions", len(logs))
+        with metric_cols[1]:
+            if "latency_ms" in logs.columns:
+                st.metric("Avg Latency (ms)", f"{logs['latency_ms'].mean():.2f}")
+        with metric_cols[2]:
+            if "tokens_used" in logs.columns:
+                st.metric("Avg Tokens/Request", f"{logs['tokens_used'].mean():.1f}")
+    else:
+        st.info("No governance logs available yet.")
+else:
+    st.warning("Governance logging not available. Please check governance_logger.py")
+
+# Footer
 st.markdown("""
 <div class="ms-footer">
-    <p>🤖 Powered by Mistral Document AI & Morgan Stanley AI Foundry</p>
-    <p>Transform any recipe PDF into actionable cooking data—Morgan Stanley style.</p>
+    Azure AI Foundry Playground by Morgan Stanley<br>
 </div>
 """, unsafe_allow_html=True)
