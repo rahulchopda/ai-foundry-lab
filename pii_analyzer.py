@@ -23,8 +23,8 @@ class PIIHandler:
         load_dotenv()
         
         # Use provided credentials or load from environment
-        self.api_key = api_key or os.getenv('AZURE_TEXT_ANALYTICS_KEY')
-        self.endpoint = endpoint or os.getenv('AZURE_TEXT_ANALYTICS_ENDPOINT')
+        self.api_key = api_key or os.getenv('API_KEY')
+        self.endpoint = endpoint or os.getenv('AZURE_ENDPOINT')
         
         if not self.api_key or not self.endpoint:
             raise ValueError("API key and endpoint must be provided either directly or through environment variables")
