@@ -6,7 +6,12 @@ import re
 from urllib.parse import urlparse
 import os
 credential = DefaultAzureCredential()
-import os
+import ast
+import re
+import ast
+from typing import Tuple, Dict, Any
+from azure.ai.inference import ChatCompletionsClient
+from azure.ai.inference.models import SystemMessage, UserMessage
 
 cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.yaml"))
 try:
@@ -29,78 +34,101 @@ class BaseModelHandler(ABC):
     def call(self, prompt: str) -> dict:
         raise NotImplementedError
 
-    # ...existing code...
     @staticmethod
-    def format_completion_output(completion) -> dict:
+    def count_filtered_false(self, obj: Any) -> int:    
+        count = 0
+        if isinstance(obj, dict):
+            if 'filtered' in obj:
+                try:
+                    if obj['filtered'] is False:
+                        return 1
+                except Exception:
+                    pass
+            for v in obj.values():
+                count += self.count_filtered_false(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                count += self.count_filtered_false(item)
+        return count
+
+    @staticmethod
+    def format_completion_output(self, raw) -> dict:
         """
         Robust extraction of common fields from different SDK/dict shapes.
         Returns standardized dict: { content, metrics: {token_usage, cost_estimate}, guardrails, monitoring, raw }
         """
-        def _get(obj, key, default=None):
-            try:
-                if isinstance(obj, dict):
-                    return obj.get(key, default)
-                return getattr(obj, key, default)
-            except Exception:
-                return default
+        model_response = ""
+        total_tokens = -1
+        safety_details = {}
+        print("raw:", raw)
+        try:
+            # 1) Extract model response text (choices[0].message.content)
+            m = re.search(
+                r"message=ChatCompletionMessage\(\s*content=(?:r?|'|\")(?P<content>.*?)(?:'|\")\s*,\s*refusal",
+                raw,
+                re.DOTALL,
+            )
+            if m:
+                # unescape common escapes
+                model_response = m.group("content").encode("utf-8").decode("unicode_escape")
+                model_response = model_response.strip()
 
-        # --- content extraction ---
-        content = None
-        choices = _get(completion, "choices")
-        first_choice = None
-        if isinstance(choices, (list, tuple)) and len(choices) > 0:
-            first_choice = choices[0]
+            # 2) Extract total_tokens (usage.total_tokens=XXX)
+            t = re.search(r"total_tokens\s*=\s*(\d+)", raw)
+            if t:
+                total_tokens = int(t.group(1))
 
-        if first_choice:
-            # try common dict shape: {"message": {"content": "..."}} or {"text": "..."}
-            if isinstance(first_choice, dict):
-                msg = first_choice.get("message")
-                if isinstance(msg, dict):
-                    content = msg.get("content") or (msg.get("content", {}).get("text") if isinstance(msg.get("content"), dict) else None)
-                content = content or first_choice.get("text")
-            else:
-                # SDK object shapes
-                msg = _get(first_choice, "message")
-                if msg is not None:
-                    content = _get(msg, "content") or getattr(msg, "content", None)
-                content = content or _get(first_choice, "text")
+            # 3) Extract content_filter_results dict from the first choice (choices[...] content_filter_results={...})
+            # We search for the first occurrence of "content_filter_results=" followed by a balanced {...}
+            cf_match = re.search(r"content_filter_results\s*=\s*(\{)", raw)
+            if cf_match:
+                # find balanced braces starting at cf_match.start(1)
+                start = cf_match.start(1)
+                depth = 0
+                i = start
+                while i < len(raw):
+                    ch = raw[i]
+                    if ch == "{":
+                        depth += 1
+                    elif ch == "}":
+                        depth -= 1
+                        if depth == 0:
+                            end = i + 1
+                            break
+                    i += 1
+                else:
+                    end = None
 
-        # fallback top-level fields
-        content = content or _get(completion, "content") or _get(completion, "output") or _get(completion, "output_text")
+                if end:
+                    cf_text = raw[start:end]
+                    # Replace Python's 'False'/'True' with Python literal (ast can handle them),
+                    # and ensure we have valid Python dict literal. ast.literal_eval can parse it.
+                    try:
+                        safety_details = ast.literal_eval(cf_text)
+                    except Exception:
+                        # fallback: try replacing common 'false'/'true' variants and single quotes
+                        cf_text_fixed = cf_text.replace("false", "False").replace("true", "True")
+                        try:
+                            safety_details = ast.literal_eval(cf_text_fixed)
+                        except Exception:
+                            safety_details = {}
 
-        # --- token usage extraction ---
-        token_usage = None
-        usage = _get(completion, "usage")
-        if usage:
-            token_usage = _get(usage, "total_tokens") or getattr(usage, "total_tokens", None)
-        if token_usage is None:
-            # other possible locations
-            token_usage = _get(completion, "token_count") or _get(completion, "total_tokens")
+            # 4) Count flags where filtered == False
+            num_safe_flags = self.count_filtered_false(safety_details)
 
-        # --- request id / monitoring ---
-        request_id = _get(completion, "id") or _get(completion, "request_id") or getattr(completion, "id", None)
-
-        # --- guardrails / content filter info ---
-        guardrails = {
-            "filtered": False,
-            "top_level": None,
-            "choices": [],
-            "prompt_filter_results": None,
-            "custom_blocklists": {"filtered": False, "details": []}
-        }       
-
+        except Exception:
+            # On parse failure return what we have
+            num_safe_flags = self.count_filtered_false(safety_details)
         
-        return {
-            "content": content,
-            "metrics": {
-                "token_usage": token_usage
-            },
-            "guardrails": guardrails,
-            "monitoring": {
-                "request_id": request_id
-            },
-            "raw": completion
-        }
+        print("model_response:", model_response)
+        print("total_tokens:", total_tokens)
+        print("num_safe_flags:", num_safe_flags)
+        print("safety_details:", safety_details)
+
+        return model_response, total_tokens, num_safe_flags, safety_details
+
+            
+        
 
 class OpenAIHandlerMixin:
     def make_openai_client(self, endpoint: str):
@@ -109,9 +137,9 @@ class OpenAIHandlerMixin:
             api_key=self.api_key
         )
     
-class GPT4OHandler(BaseModelHandler, OpenAIHandlerMixin):
+class GPT41MiniHandler(BaseModelHandler, OpenAIHandlerMixin):
     def __init__(self):
-        self.model_name = "gpt-4o"
+        self.model_name = "gpt-4.1-mini"
         self.endpoint = cfg.get("MODEL_ENDPOINTS")[self.model_name].strip()
         self.api_key =  cfg.get("API_KEY")
 
@@ -121,8 +149,11 @@ class GPT4OHandler(BaseModelHandler, OpenAIHandlerMixin):
             {"role": "system", "content": "You are a AI assistant."},
             {"role": "user", "content": prompt},
         ]
-        completion = client.chat.completions.create(model=self.model_name, messages=messages)
-        return self.format_completion_output(completion)
+        try:
+            completion = client.chat.completions.create(model=self.model_name, messages=messages)
+            return completion
+        except Exception as e:
+                raise Exception(f"Failed to parse response: {str(e)}")  
 
 class GPT41Handler(BaseModelHandler, OpenAIHandlerMixin):
     def __init__(self):
@@ -136,5 +167,31 @@ class GPT41Handler(BaseModelHandler, OpenAIHandlerMixin):
             {"role": "system", "content": "You are a AI assistant."},
             {"role": "user", "content": prompt},
         ]
-        completion = client.chat.completions.create(model=self.model_name, messages=messages)
-        return self.format_completion_output(completion)
+        try:
+            completion = client.chat.completions.create(model=self.model_name, messages=messages)
+            print("raw:", completion)
+            return completion
+            #return self.format_completion_output(completion)
+        except Exception as e:
+            raise Exception(f"Failed to parse response: {str(e)}")  
+        
+class PhiHandler(BaseModelHandler, OpenAIHandlerMixin):
+    def __init__(self):
+        self.model_name = "Phi-4-mini-instruct"
+        self.endpoint = cfg.get("MODEL_ENDPOINTS")[self.model_name].strip()
+        self.api_key =  cfg.get("API_KEY")
+
+    def call(self, prompt: str) -> dict:
+        client = self.make_openai_client(self.endpoint)
+        messages = [
+            {"role": "system", "content": "You are a AI assistant."},
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            print(self.model_name)
+            completion = client.chat.completions.create(model=self.model_name, messages=messages)
+            print("raw:", completion)
+            return completion
+            #return self.format_completion_output(completion)
+        except Exception as e:
+            raise Exception(f"Failed to parse response: {str(e)}")  
