@@ -12,14 +12,15 @@ import fitz
 #from guardrails import apply_guradrails
 from governance_logger import log_interaction, load_logs
 import yaml
-from model_handlers.model_handler import BaseModelHandler, GPT4OHandler, GPT41Handler
+from model_handlers.model_handler import BaseModelHandler, GPT41MiniHandler, GPT41Handler, PhiHandler
 
 
 
 class ModelOrchestrator:
     HANDLER_MAP = {
-        "gpt-4o": GPT4OHandler,
-        "gpt-4.1": GPT41Handler
+        "gpt-4.1": GPT41Handler,
+        "gpt-4.1-mini": GPT41MiniHandler,
+        "Phi-4-mini-instruct": PhiHandler,
     }
 
     def __init__(self, endpoints: dict, api_key: str):

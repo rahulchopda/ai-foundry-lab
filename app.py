@@ -7,13 +7,8 @@ from typing import Dict, List, Optional
 import fitz
 from azure.identity import DefaultAzureCredential
 from model_orchestrator import ModelOrchestrator
-from pii_analyzer import PIIHandler
-
-try:
-    from governance_logger import log_interaction, load_logs
-    HAS_GOVERNANCE = True
-except Exception:
-    HAS_GOVERNANCE = False
+from pii_analyzer import PIIHandler  # Add this import
+import re
 
 # Initialize PII Handler
 pii_handler = PIIHandler()
@@ -31,7 +26,7 @@ if os.path.exists(config_path):
 model_endpoints = cfg.get("MODEL_ENDPOINTS", {})
 api_key = cfg.get("API_KEY")
 model_choices = cfg.get("MODEL_DEPLOYMENTS", [])
-prompt_templates = cfg.get("PROMPT_TEMPLATES", {})
+model_cost = cfg.get("MODEL_COST", {})
 
 # Document processing functions
 def extract_pdf_text(file_content) -> str:
@@ -51,6 +46,8 @@ def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) ->
 
     try:
         raw = handler.call(prompt)
+        # Display results
+        
         if isinstance(raw, str):
             return {
                 "content": raw,
@@ -78,7 +75,7 @@ GOVERNANCE_METRICS = {
 }
 
 # Set wide layout, remove sidebar
-st.set_page_config(page_title="Azure AI Foundry Playground", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="Azure AI Foundry Playground", initial_sidebar_state="collapsed")
 
 # Inject Bootstrap CSS for professional widgets/icons and custom style for wide layout
 st.markdown("""
@@ -211,12 +208,21 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Model selection ---
+#st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
+#if model_choices:
+#    selected_model = st.selectbox("Choose model:", model_choices)
+#else:
+#    st.warning("No models configured. Please check config.yaml")
+#    selected_model = None
+
+
+# Model Selection
+AVAILABLE_MODELS = ["mistral-small-2503", "Phi-4-mini-instruct", "gpt-4.1","gpt-4.1-mini"]
 st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
-if model_choices:
-    selected_model = st.selectbox("Choose model:", model_choices)
-else:
-    st.warning("No models configured. Please check config.yaml")
-    selected_model = None
+selected_models = []
+for m in AVAILABLE_MODELS:
+    if st.checkbox(m, key=f"model_{m}"):
+        selected_models.append(m)
 
 # --- Input Text/Document ---
 st.markdown('<div class="ms-section-title">Input Data</div>', unsafe_allow_html=True)
@@ -280,104 +286,102 @@ if doc_data:
 st.markdown('<div class="ms-section-title">Prompt</div>', unsafe_allow_html=True)
 prompt = st.text_area("Enter your prompt here", height=180)
 
-if st.button("Run Model with Guardrails", type="primary", use_container_width=True):
+
+    
+# --- Run Models with Guardrails ---
+st.markdown('<div class="ms-section-title">Model Execution</div>', unsafe_allow_html=True)
+if st.button("Run Models with Guardrails", type="primary", use_container_width=True):
     if not doc_data:
         st.error("Please provide input text or upload a document first.")
         st.stop()
+    
+    #progress_bar = st.progress(0)
+    #status_text = st.empty()
+    # Prepare prompt
+    if doc_data:    
+        prompt = prompt + " " + doc_data
+    #progress_bar.progress(50)
+    #status_text.text("Calling models...")
 
-    if not selected_model:
-        st.error("Please select a model first.")
+    # Display the final prompt
+    st.markdown("#### Final Prompt")
+    st.code(prompt, language="text")
+
+    if not selected_models:
+        st.error("Please select at least one model first.")
         st.stop()
 
-    st.markdown('<div class="ms-section-title">Processing</div>', unsafe_allow_html=True)
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    cols = st.columns(len(selected_models))  # side-by-side results
+    
+    for i, model_name in enumerate(selected_models):
+        with cols[i]:
+            st.markdown(f"**{model_name}**")
+            try:
+                # Call model
+                azure_endpoint = model_endpoints.get(model_name, "").strip()
+                print(model_name, azure_endpoint, prompt, model_name)
+                raw = call_foundry_with_guardrails(
+                    azure_endpoint, prompt, model_name
+                )
 
-    try:
-        # Prepare prompt
-        status_text.text("Preparing prompt...")
-        progress_bar.progress(20)
+                
+                # --- Content ---
+                model_response = raw.choices[0].message.content
 
-        final_prompt = prompt + " " + doc_data
+                # --- Total tokens ---
+                total_tokens = raw.usage.total_tokens
 
-        # Display the final prompt
-        st.markdown('<div class="ms-section-title">Final Prompt</div>', unsafe_allow_html=True)
-        st.code(final_prompt, language="text")
+                # --- Safety flags ---
+                safety = raw.choices[0].content_filter_results
+                safety_flags = sum(1 for v in safety.values() if isinstance(v, dict) and v.get("filtered") is True)
 
-        # Call model
-        status_text.text("Calling AI model...")
-        progress_bar.progress(50)
+                    
+                # Extract values
+                #model_response = response["choices"][0]["message"]["content"]
+                #total_tokens = response["usage"]["total_tokens"]
+                #safety_flags = response["choices"][0]["content_filter_results"]
+                print("model_response:", model_response)
+                print("total_tokens:", total_tokens)
+                print("safety:", safety)
+                print("safety_flags:", safety_flags)
+                # Cost estimation (example rates, adjust as needed)
+                cost_per_1m_tokens=cfg.get("MODEL_COST")[model_name]
+                print("cost_per_1m_tokens:", cost_per_1m_tokens)
+                #cost_per_1m_tokens = float(cost_per_1m_tokens.strip())
+                cost_estimate = (total_tokens / 1000000) * cost_per_1m_tokens 
 
-        azure_endpoint = model_endpoints.get(selected_model, "").strip()
-        response = call_foundry_with_guardrails(azure_endpoint, final_prompt, selected_model)
+                st.subheader("Model Response")
+                st.write(model_response)
 
-        progress_bar.progress(100)
-        status_text.text("Processing complete!")
+                st.subheader("Total Tokens")
+                st.write(total_tokens)
 
-        # Display results
-        st.markdown('<div class="ms-section-title">Results</div>', unsafe_allow_html=True)
+                st.subheader("Safety Flags")
+                st.write(safety_flags)
 
-        # Model response
-        st.markdown("### Model Response")
-        st.write(response.get("content", "No response content."))
-
-        # Metrics and governance
-        st.markdown("### Processing Metrics")
-        metrics_cols = st.columns(4)
-        with metrics_cols[0]:
-            st.metric("Model", selected_model)
-        with metrics_cols[1]:
-            st.metric("Tokens Used", response.get("metrics", {}).get("token_usage", "N/A"))
-        with metrics_cols[3]:
-            st.metric("Safety Flags", len(response.get("guardrails", {})))
-
-    except Exception as e:
-        st.error(f"An error occurred: {str(e)}")
-        st.exception(e)
-        if HAS_GOVERNANCE:
-            log_interaction({
-                "model": selected_model,
-                "status": "error",
-                "error": str(e)
-            })
+                st.subheader("cost estimate")
+                st.write(cost_estimate)
+            except Exception as e:
+                st.error(f"Error with {model_name}: {e}") 
 
 # Monitoring Section with HTML Files
-st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)
-monitoring_cols = st.columns(3)
+#st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)
+#monitoring_cols = st.columns(3)
 
-with monitoring_cols[0]:
-    st.markdown('<div class="ms-section-title">Model Performance Metrics</div>', unsafe_allow_html=True)
-    with open(os.path.join(os.path.dirname(__file__), "io_metrics.html"), "r", encoding="utf-8") as f:
-        st.components.v1.html(f.read(), height=400, scrolling=True)
+#with monitoring_cols[0]:
+#    st.markdown('<div class="ms-section-title">Model Performance Metrics</div>', unsafe_allow_html=True)
+#    with open(os.path.join(os.path.dirname(__file__), "io_metrics.html"), "r", encoding="utf-8") as f:
+#        st.components.v1.html(f.read(), height=400, scrolling=True)
 
-with monitoring_cols[1]:
-    st.markdown('<div class="ms-section-title">Request Count Over Time</div>', unsafe_allow_html=True)
-    with open(os.path.join(os.path.dirname(__file__), "request_count.html"), "r", encoding="utf-8") as f:
-        st.components.v1.html(f.read(), height=400, scrolling=True)
-
-with monitoring_cols[2]:
-    st.markdown('<div class="ms-section-title">Model Latency (ms)</div>', unsafe_allow_html=True)
-    with open(os.path.join(os.path.dirname(__file__), "latency.html"), "r", encoding="utf-8") as f:
-        st.components.v1.html(f.read(), height=400, scrolling=True)
-
-st.markdown('<div class="ms-section-title">Governance Summary Metrics</div>', unsafe_allow_html=True)
-if HAS_GOVERNANCE:
-    logs = load_logs()
-    if logs is not None and not logs.empty:
-        st.dataframe(logs)
-        metric_cols = st.columns(3)
-        with metric_cols[0]:
-            st.metric("Total Interactions", len(logs))
-        with metric_cols[1]:
-            if "latency_ms" in logs.columns:
-                st.metric("Avg Latency (ms)", f"{logs['latency_ms'].mean():.2f}")
-        with metric_cols[2]:
-            if "tokens_used" in logs.columns:
-                st.metric("Avg Tokens/Request", f"{logs['tokens_used'].mean():.1f}")
-    else:
-        st.info("No governance logs available yet.")
-else:
-    st.warning("Governance logging not available. Please check governance_logger.py")
+#with monitoring_cols[1]:
+#    st.markdown('<div class="ms-section-title">Request Count Over Time</div>', unsafe_allow_html=True)
+#    with open(os.path.join(os.path.dirname(__file__), "request_count.html"), "r", encoding="utf-8") as f:
+#        st.components.v1.html(f.read(), height=400, scrolling=True)
+#
+#with monitoring_cols[2]:
+#    st.markdown('<div class="ms-section-title">Model Latency (ms)</div>', unsafe_allow_html=True)
+#    with open(os.path.join(os.path.dirname(__file__), "latency.html"), "r", encoding="utf-8") as f:
+#        st.components.v1.html(f.read(), height=400, scrolling=True)
 
 # Footer
 st.markdown("""
