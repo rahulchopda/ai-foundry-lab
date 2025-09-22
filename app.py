@@ -10,14 +10,8 @@ from model_orchestrator import ModelOrchestrator
 from pii_analyzer import PIIHandler  # Add this import
 import re
 
-try:
-    from governance_logger import log_interaction, load_logs
-    HAS_GOVERNANCE = True
-except Exception:
-    HAS_GOVERNANCE = False
-
 # Initialize PII Handler
-pii_handler = PIIHandler() 
+pii_handler = PIIHandler()
 
 # --- Load Config ---
 cfg = {}
@@ -49,7 +43,7 @@ def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) ->
     orchestrator = ModelOrchestrator(model_endpoints, api_key)
     handler = orchestrator.get_handler(model_name)
     print(f"Using handler {handler.__class__.__name__} with endpoint {handler.endpoint!r}")
-    
+
     try:
         raw = handler.call(prompt)
         # Display results
@@ -213,16 +207,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-
-GOVERNANCE_METRICS = {
-    "Model Usage": 324,
-    "Team Accesses": 18,
-    "Compliance Checks": "Passed",
-    "Audit Trail": "Enabled",
-    "Data Residency": "US/EU",
-    "Last Model Update": "2025-09-10",
-}
-
 # --- Model selection ---
 #st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
 #if model_choices:
@@ -268,16 +252,16 @@ elif input_type == "Document Upload":
 if doc_data:
     st.markdown('<div class="ms-section-title">PII Detection</div>', unsafe_allow_html=True)
     run_pii = st.checkbox("Detect and redact sensitive information (PII)")
-    
+
     if run_pii:
         try:
             with st.spinner("Detecting sensitive information..."):
                 pii_result = pii_handler.analyze_text(doc_data)
-                
+
                 if pii_result["success"]:
                     if pii_result["entities"]:
-                        st.markdown('<div class="ms-success">✨ PII Detection Results</div>', unsafe_allow_html=True)
-                        
+                        st.markdown('<div class="ms-success">PII Detection Results</div>', unsafe_allow_html=True)
+
                         # Show detected entities
                         with st.expander("View Detected Sensitive Information"):
                             for entity in pii_result["entities"]:
@@ -286,7 +270,7 @@ if doc_data:
                                     - Text: `{entity.text}`
                                     - Confidence: {entity.confidence_score:.2f}
                                 """)
-                        
+
                         # Update doc_data with redacted text
                         doc_data = pii_result["redacted_text"]
                         st.info("Input text has been redacted for sensitive information")
@@ -294,10 +278,9 @@ if doc_data:
                         st.success("No sensitive information (PII) detected in the text")
                 else:
                     st.error(f"PII detection failed: {pii_result.get('error', 'Unknown error')}")
-                    
+
         except Exception as e:
             st.error(f"Error during PII detection: {str(e)}")
-
 
 # Prompt
 st.markdown('<div class="ms-section-title">Prompt</div>', unsafe_allow_html=True)
@@ -379,8 +362,26 @@ if st.button("Run Models with Guardrails", type="primary", use_container_width=T
                 st.subheader("cost estimate")
                 st.write(cost_estimate)
             except Exception as e:
-                st.error(f"Error with {model_name}: {e}")           
-            
+                st.error(f"Error with {model_name}: {e}") 
+
+# Monitoring Section with HTML Files
+#st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)
+#monitoring_cols = st.columns(3)
+
+#with monitoring_cols[0]:
+#    st.markdown('<div class="ms-section-title">Model Performance Metrics</div>', unsafe_allow_html=True)
+#    with open(os.path.join(os.path.dirname(__file__), "io_metrics.html"), "r", encoding="utf-8") as f:
+#        st.components.v1.html(f.read(), height=400, scrolling=True)
+
+#with monitoring_cols[1]:
+#    st.markdown('<div class="ms-section-title">Request Count Over Time</div>', unsafe_allow_html=True)
+#    with open(os.path.join(os.path.dirname(__file__), "request_count.html"), "r", encoding="utf-8") as f:
+#        st.components.v1.html(f.read(), height=400, scrolling=True)
+#
+#with monitoring_cols[2]:
+#    st.markdown('<div class="ms-section-title">Model Latency (ms)</div>', unsafe_allow_html=True)
+#    with open(os.path.join(os.path.dirname(__file__), "latency.html"), "r", encoding="utf-8") as f:
+#        st.components.v1.html(f.read(), height=400, scrolling=True)
 
 # Footer
 st.markdown("""
