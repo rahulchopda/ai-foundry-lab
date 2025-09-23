@@ -1,6 +1,8 @@
 # shared_css.py
 # Centralized stylesheet and helper for Streamlit pages & embedded HTML.
 
+from __future__ import annotations
+
 BOOTSTRAP_CDN = """
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
@@ -119,11 +121,19 @@ header[data-testid="stHeader"] {
 }
 """
 
-def inject_shared_css():
-    """Inject Bootstrap + shared CSS into a Streamlit app."""
+def inject_shared_css(extra_css: str | None = None) -> None:
+    """
+    Inject Bootstrap + shared CSS into a Streamlit app.
+    Optionally allow callers to append extra CSS safely.
+    """
     import streamlit as st
-    st.markdown(BOOTSTRAP_CDN + f"<style>{CSS}</style>", unsafe_allow_html=True)
+    final_css = CSS + ("\n/* Extra overrides */\n" + extra_css if extra_css else "")
+    st.markdown(BOOTSTRAP_CDN + f"<style>{final_css}</style>", unsafe_allow_html=True)
 
-def inline_full_css() -> str:
-    """Return full HTML (Bootstrap links + style tag) for embedding into standalone HTML blocks."""
-    return BOOTSTRAP_CDN + f"<style>{CSS}</style>"
+def inline_full_css(extra_css: str | None = None) -> str:
+    """
+    Return full HTML (Bootstrap links + style tag) for embedding into
+    standalone HTML blocks (e.g., components, emails, exported HTML).
+    """
+    final_css = CSS + ("\n/* Extra overrides */\n" + extra_css if extra_css else "")
+    return BOOTSTRAP_CDN + f"<style>{final_css}</style>"
