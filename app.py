@@ -548,7 +548,7 @@ with tab1:
                         safety_dict = _extract_safety_dict_from_choice(_first_choice(raw))
                         flagged_count, total_cats, flagged_names = _count_flagged_and_total(safety_dict)
                         safety_flags = f"{flagged_count}/{total_cats}" if total_cats > 0 else "0/0"
-                        print("safety_flags:", safety_flags1)
+                        #print("safety_flags:", safety_flags1)
                         model_response = raw.choices[0].message.content
 
                         # --- Total tokens ---
