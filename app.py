@@ -463,8 +463,7 @@ with tab1:
 
     with col2:        
         # Add PII Detection option after input
-        if run_pii and doc_data:
-        st.markdown('<div class="ms-success">PII Detection Results</div>', unsafe_allow_html=True)
+        if run_pii and doc_data:        
             try:
                 with st.spinner("Detecting sensitive information..."):
                     pii_result = pii_handler.analyze_text(doc_data)
@@ -545,7 +544,7 @@ with tab1:
                     total_tokens = raw.usage.total_tokens
 
                     # --- Safety flags ---
-                    #safety = raw.choices[0].content_filter_results
+                    safety = raw.choices[0].content_filter_results
                     safety_flags = sum(1 for v in safety.values() if isinstance(v, dict) and v.get("filtered") is True)
 
                         
@@ -574,7 +573,6 @@ with tab1:
                 except Exception as e:
                     st.error(f"Error with {model_name}: {e}") 
                     st.write("Model Response: ", model_response)
-                    st.write("Safety Flags: ", safety_flags)
 
 # Monitoring Section with HTML Files
 #st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)

@@ -3,6 +3,8 @@ MODEL_ENDPOINTS:
   gpt-4.1: "https://tip-2025-poc-resource.cognitiveservices.azure.com/openai/v1/"
   Phi-4: "https://tip-2025-poc-resource.services.ai.azure.com/openai/v1/"
   Phi-4-mini-instruct: "https://tip-2025-poc-resource.services.ai.azure.com/openai/v1/"
+  model-router: "https://tip-2025-poc-resource.cognitiveservices.azure.com/openai/v1/"
+  mistral-small-2503: "https://tip-2025-poc-resource.cognitiveservices.azure.com/openai/v1//"
 
 
 MODEL_COST:
@@ -10,11 +12,15 @@ MODEL_COST:
   gpt-4.1: 60  # Example cost, adjust as needed
   Phi-4: 60  # Example cost, adjust as needed
   Phi-4-mini-instruct: 60  # Example cost, adjust as needed
+  mistral-small-2503: 10  # Example cost, adjust as needed
+  model-router: 5  # Example cost, adjust as needed
 
 MODEL_API_VERSION:
   gpt-4.1-mini: "2024-12-01-preview"
   gpt-4.1: "2024-12-01-preview"
   Phi-4: "2024-12-01-preview"
+  model-router: "2024-12-01-preview"
+  
 
 
 MODEL_DEPLOYMENTS:
@@ -22,3 +28,5 @@ MODEL_DEPLOYMENTS:
   - Phi-4
   - gpt-4.1
   - Phi-4-mini-instruct
+  - model-router
+  - mistral-small-2503
