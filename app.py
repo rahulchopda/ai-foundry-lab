@@ -547,16 +547,16 @@ with tab1:
                         #total_tokens = _get_total_tokens(raw)
                         safety_dict = _extract_safety_dict_from_choice(_first_choice(raw))
                         flagged_count, total_cats, flagged_names = _count_flagged_and_total(safety_dict)
-                        safety_flags1 = f"{flagged_count}/{total_cats}" if total_cats > 0 else "0/0"
-                        print("safety_flags1:", safety_flags1)
+                        safety_flags = f"{flagged_count}/{total_cats}" if total_cats > 0 else "0/0"
+                        print("safety_flags:", safety_flags1)
                         model_response = raw.choices[0].message.content
 
                         # --- Total tokens ---
                         total_tokens = raw.usage.total_tokens
 
                         # --- Safety flags ---
-                        safety = raw.choices[0].content_filter_results
-                        safety_flags = sum(1 for v in safety.values() if isinstance(v, dict) and v.get("filtered") is True)
+                        #safety = raw.choices[0].content_filter_results
+                        #safety_flags = sum(1 for v in safety.values() if isinstance(v, dict) and v.get("filtered") is True)
 
                         
                     #model_response, total_tokens, safety_flags = parse_raw_response(raw)
