@@ -7,13 +7,13 @@ import yaml
 
 from model_orchestrator import ModelOrchestrator
 from pii_analyzer import PIIHandler
-from monitoring_web import generate_monitoring_html
-from shared_css import inject_shared_css  # NEW
+from shared_css import inject_shared_css
+from monitoring_web import render_monitoring_tab  # All monitoring logic now here
 
-# Initialize PII Handler
+# ---------------- Initialization & Config ---------------- #
+
 pii_handler = PIIHandler()
 
-# --- Load Config ---
 cfg = {}
 config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
 if os.path.exists(config_path):
@@ -25,8 +25,10 @@ if os.path.exists(config_path):
 
 model_endpoints = cfg.get("MODEL_ENDPOINTS", {})
 api_key = cfg.get("API_KEY")
-model_choices = cfg.get("MODEL_DEPLOYMENTS", [])
 model_cost = cfg.get("MODEL_COST", {})
+
+# Subscription ID used for cost metrics (can move to config.yaml)
+SUBSCRIPTION_ID = cfg.get("SUBSCRIPTION_ID", "0b100b44-fb20-415e-b735-4594f153619b")
 
 def extract_pdf_text(file_content) -> str:
     text = ""
@@ -41,21 +43,10 @@ def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) ->
     try:
         raw = handler.call(prompt)
         if isinstance(raw, str):
-            return {
-                "content": raw,
-                "metrics": {},
-                "guardrails": {},
-                "monitoring": {}
-            }
+            return {"content": raw, "metrics": {}, "guardrails": {}, "monitoring": {}}
         return raw
     except Exception as e:
-        return {
-            "content": None,
-            "error": str(e),
-            "metrics": {},
-            "guardrails": {},
-            "monitoring": {}
-        }
+        return {"content": None, "error": str(e), "metrics": {}, "guardrails": {}, "monitoring": {}}
 
 GOVERNANCE_METRICS = {
     "Model Usage": 324,
@@ -72,10 +63,9 @@ st.set_page_config(
     layout="wide"
 )
 
-# Inject shared CSS
 inject_shared_css()
 
-# Shared header
+# Header
 st.markdown("""
 <div class="ms-header">
     <img src="https://www.morganstanley.com/etc/designs/mscorporate/clientlibs/mscorporate/resources/images/ms-logo.svg"
@@ -90,6 +80,7 @@ st.markdown("""
 
 tab_playground, tab_monitoring = st.tabs(["AI Playground", "Monitoring"])
 
+# --------------- AI PLAYGROUND TAB --------------- #
 with tab_playground:
     AVAILABLE_MODELS = ["mistral-small-2503", "Phi-4-mini-instruct", "gpt-4.1", "gpt-4.1-mini"]
     st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
@@ -101,19 +92,16 @@ with tab_playground:
     if input_type == "Text":
         input_text = st.text_area("Enter your input text here", height=180)
         doc_data = input_text
-        doc_name = "Text Entered"
     else:
         uploaded_file = st.file_uploader("Upload a document (PDF)", type=["pdf"])
         doc_data = None
-        doc_name = None
         if uploaded_file is not None:
-            doc_name = uploaded_file.name
             file_size = len(uploaded_file.getvalue()) / 1024
             st.markdown(
-                f'<div class="ms-success">File uploaded: <b>{doc_name}</b> ({file_size:.1f} KB)</div>',
+                f'<div class="ms-success">File uploaded: <b>{uploaded_file.name}</b> ({file_size:.1f} KB)</div>',
                 unsafe_allow_html=True
             )
-            doc_data = extract_pdf_text(uploaded_file.getvalue()) if uploaded_file else ""
+            doc_data = extract_pdf_text(uploaded_file.getvalue())
 
     if doc_data:
         st.markdown('<div class="ms-section-title">PII Detection</div>', unsafe_allow_html=True)
@@ -190,24 +178,17 @@ with tab_playground:
                 except Exception as e:
                     st.error(f"Error with {model_name}: {e}")
 
+# --------------- MONITORING TAB --------------- #
 with tab_monitoring:
     st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)
-    refresh_seconds = st.slider("Auto-refresh interval (seconds)", 10, 300, 60)
-    if "last_refresh" not in st.session_state:
-        st.session_state.last_refresh = 0
-    if st.button("Refresh Now"):
-        st.session_state.last_refresh += 1
-    try:
-        monitoring_html = generate_monitoring_html(
-            governance_metrics=GOVERNANCE_METRICS,
-            model_costs=model_cost,
-            selected_models=None,
-            include_css=False  # CSS already injected globally
-        )
-        st.components.v1.html(monitoring_html, height=1400, scrolling=True)
-    except Exception as e:
-        st.error(f"Failed to render monitoring dashboard: {e}")
+    render_monitoring_tab(
+        subscription_id=SUBSCRIPTION_ID,
+        governance_metrics=GOVERNANCE_METRICS,
+        model_costs=model_cost,
+        default_timeframe="Last7Days"
+    )
 
+# Footer
 st.markdown("""
 <div class="ms-footer">
     Azure AI Foundry Playground by Morgan Stanley<br>
