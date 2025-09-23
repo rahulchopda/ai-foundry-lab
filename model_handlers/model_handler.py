@@ -133,10 +133,18 @@ class OpenAIHandlerMixin:
             base_url=endpoint,
             api_key=self.api_key
         )
+
+class AzureAIHandlerMixin:
+    def make_azureai_client(self,  endpoint: str, api_version: str, deployment_name: str):
+        return AzureOpenAI(
+                api_version=api_version,
+                azure_endpoint=endpoint,
+                api_key=self.api_key,
+        )
     
-class GPT41MiniHandler(BaseModelHandler, OpenAIHandlerMixin):
+class MistralHandler(BaseModelHandler, OpenAIHandlerMixin):
     def __init__(self):
-        self.model_name = "gpt-4.1-mini"
+        self.model_name = "mistral-small-2503"
         self.endpoint = cfg.get("MODEL_ENDPOINTS")[self.model_name].strip()
         self.api_key =  cfg.get("API_KEY")
 
@@ -166,7 +174,7 @@ class GPT41Handler(BaseModelHandler, OpenAIHandlerMixin):
         ]
         try:
             completion = client.chat.completions.create(model=self.model_name, messages=messages)
-            print("raw:", completion)
+            #print("raw:", completion)
             return completion
             #return self.format_completion_output(completion)
         except Exception as e:
@@ -191,4 +199,29 @@ class PhiHandler(BaseModelHandler, OpenAIHandlerMixin):
             return completion
             #return self.format_completion_output(completion)
         except Exception as e:
-            raise Exception(f"Failed to parse response: {str(e)}")  
+            raise Exception(f"Failed to parse response: {str(e)}") 
+
+class ModelRouterHandler(BaseModelHandler, AzureAIHandlerMixin):
+    def __init__(self):
+        self.model_name = "model-router"
+        self.deployment_name = "model-router-2"
+        self.endpoint = cfg.get("MODEL_ENDPOINTS")[self.model_name].strip()
+        self.api_key =  cfg.get("API_KEY")
+        self.api_version=  cfg.get("MODEL_API_VERSIONS")[self.model_name].strip()
+
+    def call(self, prompt: str) -> dict:
+        print("ModelRouterHandler: call")
+        client = self.make_openai_client(self.endpoint)
+        messages = [
+            {"role": "system", "content": "You are a AI assistant."},
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            print(self.model_name)
+            completion = client.chat.completions.create(model=self.deployment_name, messages=messages)
+            print("raw:", completion)
+            print("Model chosen by the router: ", completion.model)
+            return completion
+            #return self.format_completion_output(completion)
+        except Exception as e:
+            raise Exception(f"Failed to parse response: {str(e)}") 
