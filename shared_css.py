@@ -119,7 +119,34 @@ header[data-testid="stHeader"] {
         margin-left: 1vw !important;
     }
 }
+
+.ms-safety-table-wrapper { width:100%; }
+.ms-safety-table {
+    width:100%;
+    border-collapse:collapse;
+    font-size:0.70rem;
+}
+.ms-safety-table thead tr {
+    background:#e9f2fb;
+}
+.ms-safety-table th {
+    text-align:left;
+    padding:6px 8px;
+    color:#0051a8;
+    border-bottom:1px solid #d3dbe5;
+    font-weight:600;
+    font-size:0.70rem;
+    letter-spacing:0.5px;
+}
+.ms-safety-table td {
+    padding:4px 8px;
+    border-bottom:1px solid #eaecef;
+    vertical-align:middle;
+    font-size:0.70rem;
+}
+
 """
+
 
 def inject_shared_css(extra_css: str | None = None) -> None:
     """
@@ -129,6 +156,7 @@ def inject_shared_css(extra_css: str | None = None) -> None:
     import streamlit as st
     final_css = CSS + ("\n/* Extra overrides */\n" + extra_css if extra_css else "")
     st.markdown(BOOTSTRAP_CDN + f"<style>{final_css}</style>", unsafe_allow_html=True)
+
 
 def inline_full_css(extra_css: str | None = None) -> str:
     """

@@ -19,9 +19,11 @@ client = MetricsQueryClient(credential)
 
 resource_id = "/subscriptions/0b100b44-fb20-415e-b735-4594f153619b/resourceGroups/rg-TIP-2025-POC/providers/Microsoft.CognitiveServices/accounts/tip-2025-poc-resource"
 
+# https://portal.azure.com/#@morganstanleylab.onmicrosoft.com/resource/subscriptions/0b100b44-fb20-415e-b735-4594f153619b/resourceGroups/rg-TIP-2025-POC/providers/Microsoft.CognitiveServices/accounts/tip-2025-poc-resource/metrics
+
 from datetime import datetime
 start = datetime.fromisoformat("2025-09-01T00:00:00")
-end = datetime.fromisoformat("2025-09-17T00:00:00")
+end = datetime.fromisoformat("2025-09-30T00:00:00")
 timespan = (start, end)
 # timespan = "2025-09-01T00:00:00Z/2025-09-16T00:00:00Z"
 metrics = ["TotalTokens", "Latency", "RequestsCompleted"]

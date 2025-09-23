@@ -1,7 +1,7 @@
 import ast
 import os
 import re
-from typing import Any, Dict, Tuple, List
+from typing import Any, Dict, Tuple, List, Union, Optional
 
 import fitz
 import streamlit as st
@@ -29,11 +29,20 @@ model_endpoints: Dict = cfg.get("MODEL_ENDPOINTS", {})
 api_key = cfg.get("API_KEY")
 model_choices = cfg.get("MODEL_DEPLOYMENTS", [])
 model_cost: Dict[str, float] = cfg.get("MODEL_COST", {})
-
 SUBSCRIPTION_ID = cfg.get("SUBSCRIPTION_ID", "0b100b44-fb20-415e-b735-4594f153619b")
 
+GOVERNANCE_METRICS = {
+    "Model Usage": 324,
+    "Team Accesses": 18,
+    "Compliance Checks": "Passed",
+    "Audit Trail": "Enabled",
+    "Data Residency": "US/EU",
+    "Last Model Update": "2025-09-10",
+}
+
+# ---------------------- Core Utilities ---------------------- #
+
 def extract_pdf_text(file_content) -> str:
-    """Process uploaded PDF and return text content."""
     text = ""
     doc = fitz.open(stream=file_content, filetype="pdf")
     for page in doc:
@@ -41,13 +50,12 @@ def extract_pdf_text(file_content) -> str:
     return text
 
 def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) -> Dict:
-    """Use ModelOrchestrator handler when available."""
     orchestrator = ModelOrchestrator(model_endpoints, api_key)
     handler = orchestrator.get_handler(model_name)
-    print(f"Using handler {handler.__class__.__name__} with endpoint {handler.endpoint!r}")
     try:
         raw = handler.call(prompt)
         if isinstance(raw, str):
+            # Normalize simple string return into expected shape
             return {
                 "content": raw,
                 "metrics": {},
@@ -63,15 +71,6 @@ def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) ->
             "guardrails": {},
             "monitoring": {}
         }
-
-GOVERNANCE_METRICS = {
-    "Model Usage": 324,
-    "Team Accesses": 18,
-    "Compliance Checks": "Passed",
-    "Audit Trail": "Enabled",
-    "Data Residency": "US/EU",
-    "Last Model Update": "2025-09-10",
-}
 
 def _first_choice(resp: Any) -> Any:
     if hasattr(resp, "choices"):
@@ -105,12 +104,9 @@ def _extract_safety_dict_from_choice(choice: Any) -> Dict:
         m = re.search(r"content_filter_results\s*=\s*(\{.*\})", raw, re.DOTALL)
         if m:
             text = m.group(1).replace("false", "False").replace("true", "True")
-            try:
-                parsed = ast.literal_eval(text)
-                if isinstance(parsed, dict):
-                    return parsed
-            except Exception:
-                pass
+            parsed = ast.literal_eval(text)
+            if isinstance(parsed, dict):
+                return parsed
     except Exception:
         pass
     return {}
@@ -118,7 +114,7 @@ def _extract_safety_dict_from_choice(choice: Any) -> Dict:
 def _count_flagged_and_total(safety_dict: Dict) -> Tuple[int, int, List[str]]:
     flagged = 0
     total = 0
-    flagged_names: List[str] = []
+    names: List[str] = []
     if not isinstance(safety_dict, dict):
         return 0, 0, []
     for k, v in safety_dict.items():
@@ -127,40 +123,129 @@ def _count_flagged_and_total(safety_dict: Dict) -> Tuple[int, int, List[str]]:
             try:
                 if v.get("filtered") is True:
                     flagged += 1
-                    flagged_names.append(k)
+                    names.append(k)
             except Exception:
                 if str(v.get("filtered")).lower() == "true":
                     flagged += 1
-                    flagged_names.append(k)
-    return flagged, total, flagged_names
+                    names.append(k)
+    return flagged, total, names
 
-def parse_raw_response(raw_response):
-    result = {"model_response": "No response", "total_tokens": None, "safety_flags": "N/A"}
-    if isinstance(raw_response, dict):
-        if raw_response.get("content") is None and "error" in raw_response:
-            result["model_response"] = "⚠️ Response filtered or error"
-        return result
-    if hasattr(raw_response, "choices"):
-        try:
-            if raw_response.choices and hasattr(raw_response.choices[0], "message"):
-                result["model_response"] = raw_response.choices[0].message.content or "No content"
-        except Exception:
-            result["model_response"] = "⚠️ Failed to extract message"
-        if hasattr(raw_response, "usage") and raw_response.usage:
-            result["total_tokens"] = getattr(raw_response.usage, "total_tokens", None)
-        result["safety_flags"] = "N/A"
-        return result
-    result["model_response"] = "⚠️ Unknown response type"
-    return result
+# ---------------------- Error Parsing & Safety Table ---------------------- #
 
-# Streamlit Page Setup
+def _safe_literal_eval(text: str):
+    try:
+        return ast.literal_eval(text)
+    except Exception:
+        return None
+
+def _deep_find_content_filter_result(obj) -> Dict:
+    if isinstance(obj, dict):
+        if "content_filter_result" in obj and isinstance(obj["content_filter_result"], dict):
+            return obj["content_filter_result"]
+        for v in obj.values():
+            found = _deep_find_content_filter_result(v)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _deep_find_content_filter_result(item)
+            if found:
+                return found
+    return {}
+
+def _deep_find_error_message(obj) -> Optional[str]:
+    if isinstance(obj, dict):
+        if "message" in obj and isinstance(obj["message"], str):
+            return obj["message"]
+        for v in obj.values():
+            found = _deep_find_error_message(v)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for item in obj:
+            found = _deep_find_error_message(item)
+            if found:
+                return found
+    return None
+
+def parse_error_payload(error_str: str) -> Tuple[str, Dict]:
+    """
+    Returns (concise_message, content_filter_result_dict).
+    """
+    if not isinstance(error_str, str):
+        return ("Model call failed.", {})
+    if "content_filter_result" not in error_str and "message" not in error_str:
+        return (error_str.split("\n")[0][:500], {})
+
+    first = error_str.find("{")
+    last = error_str.rfind("}")
+    if first == -1 or last == -1:
+        return (error_str[:500], {})
+
+    blob = error_str[first:last+1]
+    normalized = (blob
+                  .replace("true", "True")
+                  .replace("false", "False")
+                  .replace("null", "None"))
+    parsed = _safe_literal_eval(normalized)
+    if not isinstance(parsed, (dict, list)):
+        return (error_str[:500], {})
+
+    message = _deep_find_error_message(parsed) or "Model response filtered."
+    cfr = _deep_find_content_filter_result(parsed)
+    return (message, cfr if isinstance(cfr, dict) else {})
+
+def render_content_filter_table(content_filter_result: Dict):
+    """
+    Renders the safety table with styling aligned to the cost metrics 'Recent Days' table.
+    """
+    if not content_filter_result:
+        return
+
+    keys = sorted(content_filter_result.keys())
+    rows: List[str] = []
+    for idx, attr in enumerate(keys):
+        data = content_filter_result.get(attr)
+        if not isinstance(data, dict):
+            continue
+        filtered_val = data.get("filtered")
+        severity_val = data.get("severity", "-")
+        filtered_display = "True" if filtered_val else "False"
+        filtered_class = "ms-safety-flag-true" if filtered_val else "ms-safety-flag-false"
+        # Build row without leading indentation
+        rows.append(
+            "<tr>"
+            f"<td style='font-weight:600;color:#002855;'>{attr}</td>"
+            f"<td class='{filtered_class}' style='text-align:left;'>{filtered_display}</td>"
+            f"<td style='text-align:left;'>{severity_val}</td>"
+            "</tr>"
+        )
+
+    table_html = (
+        "<div class='ms-safety-table-wrapper'>"
+        "<div style='margin-top:0.5rem;font-weight:600;font-size:0.72rem;color:#0051a8;'>Safety / Content Filter Details</div>"
+        "<table class='ms-safety-table'>"
+        "<thead>"
+        "<tr>"
+        "<th>Attribute</th>"
+        "<th>Filtered</th>"
+        "<th>Severity</th>"
+        "</tr>"
+        "</thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</div>"
+    )
+    st.markdown(table_html, unsafe_allow_html=True)
+
+# ---------------------- UI Setup ---------------------- #
+
 st.set_page_config(
     page_title="Azure AI Foundry Playground",
     initial_sidebar_state="collapsed",
     layout="wide"
 )
 
-# Inject shared styling (single source of truth)
 inject_shared_css()
 
 # Header
@@ -178,7 +263,6 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Tabs
 tab_playground, tab_monitoring = st.tabs(["AI Playground", "Monitoring"])
 
 with tab_playground:
@@ -191,15 +275,16 @@ with tab_playground:
 
     AVAILABLE_MODELS = ["mistral-small-2503", "Phi-4-mini-instruct", "gpt-4.1", "model-router"]
     st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
-    cols = st.columns(len(AVAILABLE_MODELS))
+    model_cols = st.columns(len(AVAILABLE_MODELS))
     selected_models: List[str] = []
     for i, m in enumerate(AVAILABLE_MODELS):
-        with cols[i]:
-            if st.checkbox(m, key=f"model_{m}"):
+        with model_cols[i]:
+            if st.checkbox(m, key=m):
                 selected_models.append(m)
 
     col1, col2 = st.columns(2)
 
+    # Input column
     with col1:
         st.markdown('<div class="ms-section-title">Input Data</div>', unsafe_allow_html=True)
         input_type = st.radio("Select input type", ["Text", "Document Upload"], horizontal=True)
@@ -208,7 +293,7 @@ with tab_playground:
         if input_type == "Text":
             input_text = st.text_area("Enter your input text here", height=180)
             doc_data = input_text
-            doc_name = "Text Input"
+            doc_name = "Text Entered"
         else:
             uploaded_file = st.file_uploader("Upload a document (PDF)", type=["pdf"])
             doc_data = None
@@ -222,42 +307,46 @@ with tab_playground:
                 )
                 doc_data = extract_pdf_text(uploaded_file.getvalue()) if uploaded_file else ""
 
+    # PII detection column
     with col2:
         if run_pii and doc_data:
             try:
                 with st.spinner("Detecting sensitive information..."):
                     pii_result = pii_handler.analyze_text(doc_data)
-                if pii_result.get("success"):
-                    entities = pii_result.get("entities") or []
-                    if entities:
-                        with st.expander("View Detected Sensitive Information"):
-                            for entity in entities:
-                                st.markdown(
-                                    f"**{entity.category}**\n\n"
-                                    f"- Text: `{entity.text}`\n"
-                                    f"- Confidence: {getattr(entity, 'confidence_score', 0):.2f}"
-                                )
-                        doc_data = pii_result.get("redacted_text", doc_data)
-                        with st.expander("View Redacted Input Text"):
-                            st.write(doc_data)
+                    if pii_result["success"]:
+                        if pii_result["entities"]:
+                            with st.expander("View Detected Sensitive Information"):
+                                for entity in pii_result["entities"]:
+                                    st.markdown(f"""
+                                        **{entity.category}** found:
+                                        - Text: `{entity.text}`
+                                        - Confidence: {entity.confidence_score:.2f}
+                                    """)
+                            doc_data = pii_result["redacted_text"]
+                            with st.expander("View redacted Input Text", expanded=False):
+                                st.write(doc_data)
+                        else:
+                            st.success("No sensitive information (PII) detected in the text")
                     else:
-                        st.success("No sensitive information (PII) detected in the text")
-                else:
-                    st.error(f"PII detection failed: {pii_result.get('error', 'Unknown error')}")
+                        st.error(f"PII detection failed: {pii_result.get('error', 'Unknown error')}")
             except Exception as e:
-                st.error(f"Error during PII detection: {e}")
+                st.error(f"Error during PII detection: {str(e)}")
 
+    # Prompt
     st.markdown('<div class="ms-section-title">Prompt</div>', unsafe_allow_html=True)
     prompt = st.text_area("Enter your prompt here", height=180)
 
+    # Execution
     st.markdown('<div class="ms-section-title">Model Execution</div>', unsafe_allow_html=True)
     if st.button("Run Models with Guardrails", type="primary", use_container_width=True):
         if not doc_data:
             st.error("Please provide input text or upload a document first.")
             st.stop()
-        final_prompt = f"{prompt.strip()} {doc_data.strip()}".strip()
+
+        full_prompt = f"{prompt} {doc_data}" if doc_data else prompt
         with st.expander("View Final Prompt", expanded=False):
-            st.write(final_prompt)
+            st.write(full_prompt)
+
         if not selected_models:
             st.error("Please select at least one model first.")
             st.stop()
@@ -268,39 +357,37 @@ with tab_playground:
                 st.markdown(f"**{model_name}**")
                 try:
                     azure_endpoint = model_endpoints.get(model_name, "").strip()
-                    raw = call_foundry_with_guardrails(azure_endpoint, final_prompt, model_name)
+                    raw = call_foundry_with_guardrails(azure_endpoint, full_prompt, model_name)
 
+                    # Error branch: only show concise message + table
                     if isinstance(raw, dict) and "error" in raw:
-                        st.error(f"⚠️ {raw.get('error', 'Error calling model')}")
-                        continue
+                        err_message, cfr = parse_error_payload(raw.get("error", ""))
+                        st.error(f"⚠️ {err_message}")
+                        if cfr:
+                            render_content_filter_table(cfr)
+                        continue  # Skip normal metrics
 
-                    # Safety
+                    # Success branch
                     safety_dict = _extract_safety_dict_from_choice(_first_choice(raw))
-                    flagged_count, total_cats, _flagged_names = _count_flagged_and_total(safety_dict)
+                    flagged_count, total_cats, _ = _count_flagged_and_total(safety_dict)
                     safety_flags = f"{flagged_count}/{total_cats}" if total_cats > 0 else "0/0"
+                    model_response = raw.choices[0].message.content
+                    total_tokens = getattr(getattr(raw, "usage", None), "total_tokens", None)
 
-                    # Content & tokens
-                    try:
-                        model_response = raw.choices[0].message.content
-                    except Exception:
-                        model_response = "Unable to extract model response."
-                    try:
-                        total_tokens = getattr(raw.usage, "total_tokens", None)
-                    except Exception:
-                        total_tokens = None
+                    cost_estimate = None
+                    if total_tokens is not None:
+                        mc_value = cfg.get("MODEL_COST", {}).get(model_name)
+                        if mc_value is not None:
+                            cost_estimate = (total_tokens / 1_000_000) * mc_value
 
-                    st.write("Model Response:", model_response)
-                    st.write("Total Tokens:", total_tokens if total_tokens is not None else "N/A")
-                    st.write("Safety Flags:", safety_flags)
+                    st.write("Model Response: ", model_response)
+                    st.write("Total Tokens: ", total_tokens)
+                    st.write("Safety Flags: ", safety_flags)
+                    if cost_estimate is not None:
+                        st.write("Cost Estimate: ", round(cost_estimate, 6))
 
-                    cost_per_1m = model_cost.get(model_name)
-                    if cost_per_1m is not None and total_tokens is not None:
-                        cost_estimate = (total_tokens / 1_000_000) * cost_per_1m
-                        st.write("Cost Estimate:", f"${cost_estimate:,.6f}")
-                    else:
-                        st.write("Cost Estimate:", "N/A")
                 except Exception as e:
-                    st.error(f"Error with {model_name}: {e}")
+                    st.error(f"Unexpected error with {model_name}: {e}")
 
 with tab_monitoring:
     st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)
