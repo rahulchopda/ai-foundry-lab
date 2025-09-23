@@ -1,14 +1,13 @@
-import streamlit as st
-import json
 import os
-import time
-import yaml
-from typing import Dict, List, Optional
+from typing import Dict
+
 import fitz
-from azure.identity import DefaultAzureCredential
+import streamlit as st
+import yaml
+
 from model_orchestrator import ModelOrchestrator
-from pii_analyzer import PIIHandler  # Add this import
-import re
+from pii_analyzer import PIIHandler
+from monitoring_web import generate_monitoring_html  # NEW IMPORT
 
 # Initialize PII Handler
 pii_handler = PIIHandler()
@@ -46,8 +45,6 @@ def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) ->
 
     try:
         raw = handler.call(prompt)
-        # Display results
-        
         if isinstance(raw, str):
             return {
                 "content": raw,
@@ -65,6 +62,7 @@ def call_foundry_with_guardrails(endpoint: str, prompt: str, model_name: str) ->
             "monitoring": {}
         }
 
+# Governance metrics (reserved for future use)
 GOVERNANCE_METRICS = {
     "Model Usage": 324,
     "Team Accesses": 18,
@@ -74,10 +72,14 @@ GOVERNANCE_METRICS = {
     "Last Model Update": "2025-09-10",
 }
 
-# Set wide layout, remove sidebar
-st.set_page_config(page_title="Azure AI Foundry Playground", initial_sidebar_state="collapsed")
+# Page config
+st.set_page_config(
+    page_title="Azure AI Foundry Playground",
+    initial_sidebar_state="collapsed",
+    layout="wide"
+)
 
-# Inject Bootstrap CSS for professional widgets/icons and custom style for wide layout
+# Global CSS & Header (shared across both tabs)
 st.markdown("""
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
 <style>
@@ -195,10 +197,11 @@ header[data-testid="stHeader"] {
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css">
 """, unsafe_allow_html=True)
 
-# Morgan Stanley-style header
+# Shared header
 st.markdown("""
 <div class="ms-header">
-    <img src="https://www.morganstanley.com/etc/designs/mscorporate/clientlibs/mscorporate/resources/images/ms-logo.svg" class="ms-logo" alt="Morgan Stanley Logo" />
+    <img src="https://www.morganstanley.com/etc/designs/mscorporate/clientlibs/mscorporate/resources/images/ms-logo.svg"
+         class="ms-logo" alt="Morgan Stanley Logo" />
     <h1 style="margin-bottom:8px;font-family: 'Helvetica Neue', 'Segoe UI', 'Arial', sans-serif !important;">Gen AI Playground</h1>
     <span style="font-size:1.2rem;font-weight:400;">
         Experiment, Evaluate, Govern, and Monitor AI Models
@@ -207,183 +210,147 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- Model selection ---
-#st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
-#if model_choices:
-#    selected_model = st.selectbox("Choose model:", model_choices)
-#else:
-#    st.warning("No models configured. Please check config.yaml")
-#    selected_model = None
+# Create tabs
+tab_playground, tab_monitoring = st.tabs(["AI Playground", "Monitoring"])
 
+# ---------------------- AI PLAYGROUND TAB ----------------------
+with tab_playground:
+    AVAILABLE_MODELS = ["mistral-small-2503", "Phi-4-mini-instruct", "gpt-4.1", "gpt-4.1-mini"]
+    st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
+    selected_models = []
+    for m in AVAILABLE_MODELS:
+        if st.checkbox(m, key=f"model_{m}"):
+            selected_models.append(m)
 
-# Model Selection
-AVAILABLE_MODELS = ["mistral-small-2503", "Phi-4-mini-instruct", "gpt-4.1","gpt-4.1-mini"]
-st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
-selected_models = []
-for m in AVAILABLE_MODELS:
-    if st.checkbox(m, key=f"model_{m}"):
-        selected_models.append(m)
+    # Input Type
+    st.markdown('<div class="ms-section-title">Input Data</div>', unsafe_allow_html=True)
+    input_type = st.radio("Select input type", ["Text", "Document Upload"], horizontal=True)
 
-# --- Input Text/Document ---
-st.markdown('<div class="ms-section-title">Input Data</div>', unsafe_allow_html=True)
-input_type = st.radio("Select input type", ["Text", "Document Upload"], horizontal=True)
+    if input_type == "Text":
+        input_text = st.text_area("Enter your input text here", height=180)
+        doc_data = input_text
+        doc_name = "Text Entered"
+    else:
+        uploaded_file = st.file_uploader("Upload a document (PDF)", type=["pdf"])
+        doc_data = None
+        doc_name = None
+        if uploaded_file is not None:
+            doc_name = uploaded_file.name
+            file_size = len(uploaded_file.getvalue()) / 1024
+            st.markdown(
+                f'<div class="ms-success">File uploaded: <b>{doc_name}</b> ({file_size:.1f} KB)</div>',
+                unsafe_allow_html=True
+            )
+            doc_data = extract_pdf_text(uploaded_file.getvalue()) if uploaded_file else ""
 
-if input_type == "Text":
-    input_text = st.text_area("Enter your input text here", height=180)
-    doc_data = input_text
-    doc_name = "Text Entered"
-elif input_type == "Document Upload":
-    uploaded_file = st.file_uploader("Upload a document (PDF)", type=["pdf"])
-    doc_data = None
-    doc_name = None
-    if uploaded_file is not None:
-        doc_name = uploaded_file.name
-        file_size = len(uploaded_file.getvalue()) / 1024  # KB
-        st.markdown(
-            f'<div class="ms-success">File uploaded: <b>{doc_name}</b> ({file_size:.1f} KB)</div>',
-            unsafe_allow_html=True
-        )
-        if uploaded_file:
-            doc_data = extract_pdf_text(uploaded_file.getvalue())
-        else:
-            doc_data = ""
-
-# Add PII Detection option after input
-if doc_data:
-    st.markdown('<div class="ms-section-title">PII Detection</div>', unsafe_allow_html=True)
-    run_pii = st.checkbox("Detect and redact sensitive information (PII)")
-
-    if run_pii:
-        try:
-            with st.spinner("Detecting sensitive information..."):
-                pii_result = pii_handler.analyze_text(doc_data)
-
-                if pii_result["success"]:
-                    if pii_result["entities"]:
-                        st.markdown('<div class="ms-success">PII Detection Results</div>', unsafe_allow_html=True)
-
-                        # Show detected entities
-                        with st.expander("View Detected Sensitive Information"):
-                            for entity in pii_result["entities"]:
-                                st.markdown(f"""
-                                    **{entity.category}** found:
-                                    - Text: `{entity.text}`
-                                    - Confidence: {entity.confidence_score:.2f}
-                                """)
-
-                        # Update doc_data with redacted text
-                        doc_data = pii_result["redacted_text"]
-                        st.info("Input text has been redacted for sensitive information")
-                    else:
-                        st.success("No sensitive information (PII) detected in the text")
-                else:
-                    st.error(f"PII detection failed: {pii_result.get('error', 'Unknown error')}")
-
-        except Exception as e:
-            st.error(f"Error during PII detection: {str(e)}")
-
-# Prompt
-st.markdown('<div class="ms-section-title">Prompt</div>', unsafe_allow_html=True)
-prompt = st.text_area("Enter your prompt here", height=180)
-
-
-    
-# --- Run Models with Guardrails ---
-st.markdown('<div class="ms-section-title">Model Execution</div>', unsafe_allow_html=True)
-if st.button("Run Models with Guardrails", type="primary", use_container_width=True):
-    if not doc_data:
-        st.error("Please provide input text or upload a document first.")
-        st.stop()
-    
-    #progress_bar = st.progress(0)
-    #status_text = st.empty()
-    # Prepare prompt
-    if doc_data:    
-        prompt = prompt + " " + doc_data
-    #progress_bar.progress(50)
-    #status_text.text("Calling models...")
-
-    # Display the final prompt
-    st.markdown("#### Final Prompt")
-    st.code(prompt, language="text")
-
-    if not selected_models:
-        st.error("Please select at least one model first.")
-        st.stop()
-
-    cols = st.columns(len(selected_models))  # side-by-side results
-    
-    for i, model_name in enumerate(selected_models):
-        with cols[i]:
-            st.markdown(f"**{model_name}**")
+    # Optional PII detection
+    if doc_data:
+        st.markdown('<div class="ms-section-title">PII Detection</div>', unsafe_allow_html=True)
+        run_pii = st.checkbox("Detect and redact sensitive information (PII)")
+        if run_pii:
             try:
-                # Call model
-                azure_endpoint = model_endpoints.get(model_name, "").strip()
-                print(model_name, azure_endpoint, prompt, model_name)
-                raw = call_foundry_with_guardrails(
-                    azure_endpoint, prompt, model_name
-                )
-
-                
-                # --- Content ---
-                model_response = raw.choices[0].message.content
-
-                # --- Total tokens ---
-                total_tokens = raw.usage.total_tokens
-
-                # --- Safety flags ---
-                safety = raw.choices[0].content_filter_results
-                safety_flags = sum(1 for v in safety.values() if isinstance(v, dict) and v.get("filtered") is True)
-
-                    
-                # Extract values
-                #model_response = response["choices"][0]["message"]["content"]
-                #total_tokens = response["usage"]["total_tokens"]
-                #safety_flags = response["choices"][0]["content_filter_results"]
-                print("model_response:", model_response)
-                print("total_tokens:", total_tokens)
-                print("safety:", safety)
-                print("safety_flags:", safety_flags)
-                # Cost estimation (example rates, adjust as needed)
-                cost_per_1m_tokens=cfg.get("MODEL_COST")[model_name]
-                print("cost_per_1m_tokens:", cost_per_1m_tokens)
-                #cost_per_1m_tokens = float(cost_per_1m_tokens.strip())
-                cost_estimate = (total_tokens / 1000000) * cost_per_1m_tokens 
-
-                st.subheader("Model Response")
-                st.write(model_response)
-
-                st.subheader("Total Tokens")
-                st.write(total_tokens)
-
-                st.subheader("Safety Flags")
-                st.write(safety_flags)
-
-                st.subheader("cost estimate")
-                st.write(cost_estimate)
+                with st.spinner("Detecting sensitive information..."):
+                    pii_result = pii_handler.analyze_text(doc_data)
+                    if pii_result["success"]:
+                        if pii_result["entities"]:
+                            st.markdown('<div class="ms-success">PII Detection Results</div>', unsafe_allow_html=True)
+                            with st.expander("View Detected Sensitive Information"):
+                                for entity in pii_result["entities"]:
+                                    st.markdown(f"""
+**{entity.category}** found:
+- Text: `{entity.text}`
+- Confidence: {entity.confidence_score:.2f}
+""")
+                            doc_data = pii_result["redacted_text"]
+                            st.info("Input text has been redacted for sensitive information.")
+                        else:
+                            st.success("No sensitive information (PII) detected in the text.")
+                    else:
+                        st.error(f"PII detection failed: {pii_result.get('error', 'Unknown error')}")
             except Exception as e:
-                st.error(f"Error with {model_name}: {e}") 
+                st.error(f"Error during PII detection: {str(e)}")
 
-# Monitoring Section with HTML Files
-#st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)
-#monitoring_cols = st.columns(3)
+    # Prompt
+    st.markdown('<div class="ms-section-title">Prompt</div>', unsafe_allow_html=True)
+    prompt = st.text_area("Enter your prompt here", height=180)
 
-#with monitoring_cols[0]:
-#    st.markdown('<div class="ms-section-title">Model Performance Metrics</div>', unsafe_allow_html=True)
-#    with open(os.path.join(os.path.dirname(__file__), "io_metrics.html"), "r", encoding="utf-8") as f:
-#        st.components.v1.html(f.read(), height=400, scrolling=True)
+    # Execute models
+    st.markdown('<div class="ms-section-title">Model Execution</div>', unsafe_allow_html=True)
+    if st.button("Run Models with Guardrails", type="primary", use_container_width=True):
+        if not doc_data:
+            st.error("Please provide input text or upload a document first.")
+            st.stop()
 
-#with monitoring_cols[1]:
-#    st.markdown('<div class="ms-section-title">Request Count Over Time</div>', unsafe_allow_html=True)
-#    with open(os.path.join(os.path.dirname(__file__), "request_count.html"), "r", encoding="utf-8") as f:
-#        st.components.v1.html(f.read(), height=400, scrolling=True)
-#
-#with monitoring_cols[2]:
-#    st.markdown('<div class="ms-section-title">Model Latency (ms)</div>', unsafe_allow_html=True)
-#    with open(os.path.join(os.path.dirname(__file__), "latency.html"), "r", encoding="utf-8") as f:
-#        st.components.v1.html(f.read(), height=400, scrolling=True)
+        final_prompt = (prompt or "") + ("\n\n" + doc_data if doc_data else "")
+        st.markdown("#### Final Prompt")
+        st.code(final_prompt, language="text")
 
-# Footer
+        if not selected_models:
+            st.error("Please select at least one model first.")
+            st.stop()
+
+        cols = st.columns(len(selected_models))
+        for i, model_name in enumerate(selected_models):
+            with cols[i]:
+                st.markdown(f"**{model_name}**")
+                try:
+                    azure_endpoint = (model_endpoints.get(model_name, "") or "").strip()
+                    raw = call_foundry_with_guardrails(azure_endpoint, final_prompt, model_name)
+
+                    if isinstance(raw, dict) and raw.get("error"):
+                        st.error(f"Handler error: {raw['error']}")
+                        continue
+
+                    # Expecting OpenAI-style response object
+                    model_response = raw.choices[0].message.content
+                    total_tokens = getattr(raw.usage, "total_tokens", None) or raw.usage.get("total_tokens")
+                    safety = getattr(raw.choices[0], "content_filter_results", {}) or {}
+                    safety_flags = sum(
+                        1 for v in safety.values() if isinstance(v, dict) and v.get("filtered") is True
+                    )
+                    # Cost
+                    cost_per_1m_tokens = cfg.get("MODEL_COST", {}).get(model_name, 0)
+                    cost_estimate = (total_tokens / 1_000_000) * cost_per_1m_tokens if total_tokens else 0
+
+                    st.subheader("Model Response")
+                    st.write(model_response)
+
+                    st.subheader("Total Tokens")
+                    st.write(total_tokens)
+
+                    st.subheader("Safety Flags")
+                    st.write(safety_flags)
+
+                    st.subheader("Cost Estimate")
+                    st.write(f"{cost_estimate:.6f} (assuming {cost_per_1m_tokens}/1M tokens)")
+                except Exception as e:
+                    st.error(f"Error with {model_name}: {e}")
+
+# ---------------------- MONITORING TAB ----------------------
+with tab_monitoring:
+    st.markdown('<div class="ms-section-title">Monitoring Dashboard</div>', unsafe_allow_html=True)
+
+    # Optional auto-refresh
+    refresh_seconds = st.slider("Auto-refresh interval (seconds)", 10, 300, 60)
+    if "last_refresh" not in st.session_state:
+        st.session_state.last_refresh = 0
+
+    # Simple manual refresh button
+    if st.button("Refresh Now"):
+        st.session_state.last_refresh += 1
+
+    # Generate monitoring HTML (single consolidated dashboard)
+    try:
+        monitoring_html = generate_monitoring_html(
+            governance_metrics=GOVERNANCE_METRICS,
+            model_costs=model_cost,
+            selected_models=None  # Could pass active models if needed
+        )
+        st.components.v1.html(monitoring_html, height=1400, scrolling=True)
+    except Exception as e:
+        st.error(f"Failed to render monitoring dashboard: {e}")
+
+# Footer (shared)
 st.markdown("""
 <div class="ms-footer">
     Azure AI Foundry Playground by Morgan Stanley<br>

@@ -1,17 +1,14 @@
-import yaml
-from openai import AzureOpenAI, OpenAI
-from azure.identity import DefaultAzureCredential
-from abc import ABC, abstractmethod
-import re
-from urllib.parse import urlparse
 import os
+from abc import ABC, abstractmethod
+
+import yaml
+from azure.identity import DefaultAzureCredential
+from openai import OpenAI
+
 credential = DefaultAzureCredential()
-import ast
 import re
 import ast
-from typing import Tuple, Dict, Any
-from azure.ai.inference import ChatCompletionsClient
-from azure.ai.inference.models import SystemMessage, UserMessage
+from typing import Any
 
 cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.yaml"))
 try:

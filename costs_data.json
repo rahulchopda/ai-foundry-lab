@@ -1,0 +1,75 @@
+{
+  "subscription_id": "0b100b44-fb20-415e-b735-4594f153619b",
+  "resource_group": "rg-TIP-2025-POC",
+  "resource_name": "tip-2025-poc-resource",
+  "date": "2025-09-16",
+  "models": [
+    {
+      "name": "GPT-4.1",
+      "costs": {
+        "meter_breakdown": [
+          {
+            "meter_category": "Input Tokens",
+            "consumed_quantity": 1500000,
+            "cost_usd": 45.00
+          },
+          {
+            "meter_category": "Output Tokens",
+            "consumed_quantity": 1000000,
+            "cost_usd": 60.00
+          },
+          {
+            "meter_category": "API Calls",
+            "consumed_quantity": 15000,
+            "cost_usd": 0.00
+          }
+        ],
+        "daily_total_cost_usd": 105.00
+      }
+    },
+    {
+      "name": "PII Text Analyzer",
+      "costs": {
+        "meter_breakdown": [
+          {
+            "meter_category": "PII Detection Units",
+            "consumed_quantity": 800,
+            "cost_usd": 800.00
+          },
+          {
+            "meter_category": "API Calls",
+            "consumed_quantity": 6000,
+            "cost_usd": 0.00
+          }
+        ],
+        "daily_total_cost_usd": 800.00
+      }
+    },
+    {
+      "name": "Mistral Document AI",
+      "costs": {
+        "meter_breakdown": [
+          {
+            "meter_category": "Pages Processed",
+            "consumed_quantity": 10000,
+            "cost_usd": 10.00
+          },
+          {
+            "meter_category": "Tokens Processed",
+            "consumed_quantity": 3000000,
+            "cost_usd": 90.00
+          },
+          {
+            "meter_category": "API Calls",
+            "consumed_quantity": 10000,
+            "cost_usd": 0.00
+          }
+        ],
+        "daily_total_cost_usd": 100.00
+      }
+    }
+  ],
+  "summary": {
+    "total_cost_usd": 1005.00
+  }
+}
