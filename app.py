@@ -534,18 +534,29 @@ with tab1:
                     raw = call_foundry_with_guardrails(
                         azure_endpoint, prompt, model_name
                     )
+                    print("raw content:", raw)
 
                     
                     # --- Content ---
-                    print("raw content:", raw)
-                    model_response = raw.choices[0].message.content
+                    if "error" in raw:
+                        model_response = f"⚠️ {raw.get('error', 'Error calling model')}"
+                        total_tokens = None
+                        safety_flags = "N/A"    
+                    else:
+                        #model_response = _get_message_content(_first_choice(raw))
+                        #total_tokens = _get_total_tokens(raw)
+                        safety_dict = _extract_safety_dict_from_choice(_first_choice(raw))
+                        flagged_count, total_cats, flagged_names = _count_flagged_and_total(safety_dict)
+                        safety_flags1 = f"{flagged_count}/{total_cats}" if total_cats > 0 else "0/0"
+                        print("safety_flags1:", safety_flags1)
+                        model_response = raw.choices[0].message.content
 
-                    # --- Total tokens ---
-                    total_tokens = raw.usage.total_tokens
+                        # --- Total tokens ---
+                        total_tokens = raw.usage.total_tokens
 
-                    # --- Safety flags ---
-                    safety = raw.choices[0].content_filter_results
-                    safety_flags = sum(1 for v in safety.values() if isinstance(v, dict) and v.get("filtered") is True)
+                        # --- Safety flags ---
+                        safety = raw.choices[0].content_filter_results
+                        safety_flags = sum(1 for v in safety.values() if isinstance(v, dict) and v.get("filtered") is True)
 
                         
                     #model_response, total_tokens, safety_flags = parse_raw_response(raw)
