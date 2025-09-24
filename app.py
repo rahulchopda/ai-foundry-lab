@@ -251,11 +251,9 @@ inject_shared_css()
 # Header
 st.markdown("""
 <div class="ms-header">
-    <img src="https://www.morganstanley.com/etc/designs/mscorporate/clientlibs/mscorporate/resources/images/ms-logo.svg"
+    <img src="https://www.morganstanley.com/etc.clientlibs/msdotcomr4/clientlibs/components/site/resources/img/logo-white.png"
          class="ms-logo" alt="Morgan Stanley Logo" />
-    <h1 style="margin-bottom:8px;font-family: 'Helvetica Neue','Segoe UI','Arial',sans-serif !important;">
-        Gen AI Playground
-    </h1>
+    <h1 style="margin-bottom:8px;font-family: 'Helvetica Neue', 'Segoe UI', 'Arial', sans-serif !important;">Gen AI Playground</h1>
     <span style="font-size:1.2rem;font-weight:400;">
         Experiment, Evaluate, Govern, and Monitor AI Models
         <span class="badge-foundry">Powered by Azure AI Foundry</span>
@@ -273,7 +271,7 @@ with tab_playground:
     </div>
     """, unsafe_allow_html=True)
 
-    AVAILABLE_MODELS = ["mistral-small-2503", "Phi-4-mini-instruct", "gpt-4.1", "model-router"]
+    AVAILABLE_MODELS = ["Phi-4-mini-instruct", "gpt-4.1", "mistral-small-2503"]
     st.markdown('<div class="ms-section-title">Model Selection</div>', unsafe_allow_html=True)
     model_cols = st.columns(len(AVAILABLE_MODELS))
     selected_models: List[str] = []

@@ -21,7 +21,7 @@ class ModelOrchestrator:
         "gpt-4.1": GPT41Handler,
         "mistral-small-2503": MistralHandler,
         "Phi-4-mini-instruct": PhiHandler,
-        "model-router": ModelRouterHandler,
+        # "model-router": ModelRouterHandler,
     }
 
     def __init__(self, endpoints: dict, api_key: str):

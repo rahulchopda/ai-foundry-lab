@@ -130,19 +130,6 @@ def _build_operational_section(governance_metrics: Dict[str, Any],
     </div>
     """
 
-    raw_json = {
-        "request_timeseries": req_series,
-        "latency_timeseries": latency_series,
-        "token_timeseries": token_series,
-    }
-    raw_html = f"""
-    <div class="ms-card">
-        <h3 class="ms-section-title" style="margin-top:0;font-size:1.05rem;">Raw Monitoring Data (Sample)</h3>
-        <pre style="font-size:0.6rem;max-height:250px;overflow:auto;background:#f7f8fa;
-                    padding:0.9rem;border:1px solid #eaecef;border-radius:8px;">{json.dumps(raw_json, indent=2)}</pre>
-    </div>
-    """
-
     combined = f"""
     {top_metrics_html}
     {trends_html}
@@ -150,7 +137,6 @@ def _build_operational_section(governance_metrics: Dict[str, Any],
         <div>{governance_html}</div>
         <div>{config_cost_html}</div>
     </div>
-    {raw_html}
     """
     return combined
 
@@ -190,19 +176,17 @@ def render_monitoring_tab(
         cost_html = "<div class='ms-card' style='margin-top:1rem;'>No subscription configured for cost metrics.</div>"
 
     # Latency Section (replacement visualization)
-    latency_html = render_latency_section(list(model_costs.keys()))
+    # latency_html = render_latency_section(list(model_costs.keys()))
 
     #Performance
     # Latency Section (replacement visualization)
-    from monitoring_webPage import render_latency_section
-
     latency_html, df = render_latency_section(metric_name="Latency", unit="ms")
     # Use html_snippet in your web page/app
     #latency_html = render_latency_section(list(model_costs.keys()))
     
     # Compose
     st.components.v1.html(
-        operational_html + cost_html + latency_html,
+        cost_html + latency_html,
         height=2300,
         scrolling=True
     )
