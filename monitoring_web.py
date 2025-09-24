@@ -192,6 +192,14 @@ def render_monitoring_tab(
     # Latency Section (replacement visualization)
     latency_html = render_latency_section(list(model_costs.keys()))
 
+    #Performance
+    # Latency Section (replacement visualization)
+    from monitoring_webPage import render_latency_section
+
+    latency_html, df = render_latency_section(metric_name="Latency", unit="ms")
+    # Use html_snippet in your web page/app
+    #latency_html = render_latency_section(list(model_costs.keys()))
+    
     # Compose
     st.components.v1.html(
         operational_html + cost_html + latency_html,
